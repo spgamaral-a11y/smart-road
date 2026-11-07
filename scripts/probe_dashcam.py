@@ -1470,6 +1470,32 @@ def write_report(results: list[dict], tools: dict, engines: list, out_root: Path
 
 
 # ------------------------------------------------------------------------------ main
+def explain_import_error(exc: ImportError) -> str:
+    """Say why OpenCV or numpy didn't import, for the Python actually running this, and how to fix it."""
+    me, msg = sys.executable, str(exc)
+    lines = [f"Could not import OpenCV or numpy: {msg}",
+             f"This script is running on {me} (Python {platform.python_version()}).", ""]
+    if re.search(r"lib\S*\.so|DLL load failed|cannot open shared object", msg):
+        lines += ["OpenCV is installed, but a system library it needs is missing. Either install the library:",
+                  "    sudo apt install libgl1 libglib2.0-0",
+                  "or switch to the OpenCV build that doesn't need it:",
+                  f'    "{me}" -m pip uninstall -y opencv-python',
+                  f'    "{me}" -m pip install opencv-python-headless']
+    elif "numpy" in msg.lower() and "no module named 'numpy'" not in msg.lower():
+        lines += ["OpenCV and numpy don't match. Reinstall them together:",
+                  f'    "{me}" -m pip install --upgrade --force-reinstall numpy opencv-python-headless']
+    else:
+        lines += ["They aren't installed for this Python; pip may have put them in another one. Install them here:",
+                  f'    "{me}" -m pip install opencv-python-headless numpy',
+                  "If pip refuses with 'externally-managed-environment' (Ubuntu's own Python), use a virtual",
+                  "environment and run the probe with its Python:",
+                  "    python3 -m venv ~/.venvs/probe",
+                  "    ~/.venvs/probe/bin/pip install opencv-python-headless numpy",
+                  "    ~/.venvs/probe/bin/python scripts/probe_dashcam.py"]
+    lines += ["", "Have only one of opencv-python and opencv-python-headless installed: together they break each other."]
+    return "\n".join(lines)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("clips", nargs="*", help=f"video files or folders (default: everything in {INPUT_DIR})")
@@ -1493,8 +1519,8 @@ def main() -> int:
     try:
         import cv2
         import numpy as np
-    except ImportError:
-        print("OpenCV and numpy are needed: pip install opencv-python numpy  (or pip install -r requirements.txt)")
+    except ImportError as exc:
+        print(explain_import_error(exc))
         return 2
 
     tools = {"exiftool": find_tool("exiftool", args.exiftool), "tesseract": find_tool("tesseract", args.tesseract)}
