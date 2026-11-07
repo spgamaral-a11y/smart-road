@@ -1,7 +1,20 @@
 # Smart Road: frame export, CSV export and GPS/time tagging
 
 **Spec for Claude Code (VS Code).** Target repo: `spgamaral-a11y/smart-road` at commit `af57388`.
-Version 1.6, 2026-11-07. Suggested location in the repo: `DATA/docs/SPEC_EXPORT_GPS_CSV.md`.
+Version 1.7, 2026-11-07. Suggested location in the repo: `DATA/docs/SPEC_EXPORT_GPS_CSV.md`.
+
+**Changes in 1.7: Phase 0 results on real footage** (`DASHCAM_NOTES.md`)
+
+Measured on a VIOFO A129 Plus front clip (a 1 fps timelapse) and a Garmin clip downloaded from YouTube, with `scripts/probe_dashcam.py`.
+
+- **The built-in Novatek reader works on the real file:** 60 of 60 blocks, marker at offset 40 (A.3), the same 60 fixes as ExifTool 12.76. One block per second of video is confirmed in timelapse (§8.2).
+- **A.3's gotcha was too broad.** On the real file the `gps ` box is the last child of `moov` too, but its blocks sit inside `mdat`, and ExifTool found every fix.
+- **The container clock marks the end of the recording** on the camera's clock, not the start (§8.5): `container_clock_marks` is added to the profile.
+- **The VIOFO's clock runs on UTC, not UTC+1** (to within the timelapse window, with confirmation pending). Offsets are measured per video when there is GPS.
+- **In timelapse, a block's fix is taken partway into its capture window**, about 12 s into each 30-s window on this clip, so block timing alone misplaces positions by hundreds of metres. The clock offset is now measured by matching stamp positions to the GPS track (§8.2, A.9).
+- **Garmin writes month/day/year** (`01/15/2020`): its built-in layout is MDY, and the screenshot's `01/11/2020` is 11 January 2020.
+- **Variable speed-up.** The Garmin download changes speed along the file (×49, ×57, ×32), so no single time base fits it. `recording_mode=variable` gives every graded frame its own stamp's time and position (§8.8).
+- **Tesseract is the right default:** on the user's machine it took 80–90 ms per read and RapidOCR 400–800 ms.
 
 **Changes in 1.6: dedicated Input and Output folders** (§6.0)
 
@@ -303,7 +316,7 @@ Everything camera-specific is a default, never a hard-coded assumption.
 | GPS source | Auto | `Auto`, `None`, `Embedded in video`, `GPX file(s)`, or `On-screen stamp (OCR)`. **Auto**, per video: GPX if GPX files are given; otherwise the profile's embedded GPS if the file has it; otherwise the on-screen stamp if an OCR engine is installed; otherwise none. The source used is written to `gps_source`. |
 | Downloaded / re-encoded video | Auto | `Auto`, `Yes` or `No`. **Yes** means the file name, container clock and embedded GPS are not the camera's, so only the stamp is used (§8.10). **Auto** answers Yes when the profile was recognised from the stamp alone. |
 | Date & time source | Auto | `Auto`, `Embedded GPS clock`, `On-screen stamp (OCR)`, `File name`, `Container (mvhd)`, or `Manual`. Rules in §8.5. |
-| Camera clock UTC offset at start (h) | +1.0 | From −12 to +14, in steps of 0.25. Help text: "Stamps and file names use the camera's local time. Angola (WAT) is UTC+1 with no daylight saving." Used only when the offset can't be measured or carried over from the previous video (§8.7). |
+| Camera clock UTC offset at start (h) | +1.0 | From −12 to +14, in steps of 0.25. Help text: "Stamps and file names use the camera's own clock. Angola (WAT) is UTC+1 with no daylight saving, but a camera can be set to any zone: the VIOFO measured in Phase 0 runs on UTC." Used only when the offset can't be measured or carried over from the previous video (§8.7); files with a real GPS clock always measure it. |
 | Local time columns | Camera's clock | `Camera's clock` means what the camera showed, with the offset per row. `Fixed UTC offset` plus a number gives every row the same zone, for a report in one zone (§8.7). |
 | Fine time offset (s) | 0.0 | Added to the resolved video clock. |
 | Max gap to interpolate (s) | 5 | Beyond this, the location is left blank and `gps_quality` is `gap`. |
@@ -583,7 +596,7 @@ At startup, check that the model's `names[0..7]` match `CLASSES`, and warn if th
 | `camera_height_m`, `focal_35mm`, `horizon`, `measure_from_m`, `measure_to_m` | The camera settings used to grade this video: the run's sidebar values, repeated per row so merged CSVs describe themselves |
 | `gps_backend` | `builtin`, `exiftool`, `gpx`, `ocr-tesseract`, `ocr-rapidocr`, or empty |
 | `gps_coverage_pct` | % of graded frames that have lat/lon |
-| `recording_mode` | `normal` or `timelapse` (§8.8) |
+| `recording_mode` | `normal`, `timelapse` or `variable` (§8.8) |
 | `speedup` | Driving seconds per video second: 1 for normal video, 30 for a 1 fps timelapse played at 30 fps |
 | `capture_fps` | Frames captured per second of driving: the file's fps for normal video, the timelapse rate (1, 2, 3, 5, 10) otherwise |
 | `mode_source` | `declared`, `stamp`, `gps`, `filenames` or `assumed`. A declared mode that the evidence contradicts also writes a warning. |
@@ -625,7 +638,7 @@ In Excel PT/EU format the same row uses `;` as the delimiter and decimal commas 
   - 4 unused bytes;
   - a big-endian u32 count `n`;
   - `n` pairs of big-endian u32 values: absolute offset and size.
-- Each pair points to a `free` box whose bytes 4–12 read `freeGPS `. There is one block per second of video, **also in timelapse files**. In a 1 fps timelapse, that is one fix per 30 frames (§8.8).
+- Each pair points to a `free` box whose bytes 4–12 read `freeGPS `. There is one block per second of video, **also in timelapse files**. In a 1 fps timelapse, that is one fix per 30 frames (§8.8). Phase 0 confirmed this on an A129 Plus timelapse: 60 blocks for 60 s of video, marker at offset 40, all valid.
 - The block format varies between models and firmware versions. ExifTool decodes more than 40 of them. A dashcamtalk.com user reports that ExifTool produces a GPX file from A129 Plus videos, while Sergei's older `nvtk_mp42gpx.py` script no longer does.
 
 **Built-in decoder** (`smartroad/survey/novatek.py`, MUST). Layout in Appendix A.3, checked against ExifTool.
@@ -646,7 +659,8 @@ In Excel PT/EU format the same row uses `;` as the delimiter and decimal commas 
 4. Align the fixes with the video. Block *i* covers video seconds [i, i+1). VIOFO writes one block per second of **video** in both normal and timelapse mode (§8.8).
    - Fit `fix_utc_i = utc0 + i × s` robustly, using the median of pairwise slopes (A.8).
    - `s` is the number of driving seconds per video second: 1 for normal video, the speed-up for timelapse. The same fit therefore detects timelapse (§8.8).
-   - `video_start_utc = utc0`.
+   - `video_start_utc = utc0 − p`, where `p` is how far into its video second a block's fix is taken, in seconds of driving. For normal video `p` is under 1 s and is ignored.
+   - **In timelapse, `p` matters.** On the Phase 0 A129 Plus clip, each fix sits about 12 s into its 30-s capture window. Taking `p = 0` misplaces every position by about 12 s of driving, 250–460 m at road speed. When the stamp shows positions, measure the offset and `p` by matching stamp positions to the GPS track (A.9). With no stamp, take `p` as half a capture window and warn that positions are uncertain by ± half a window.
    - Frame UTC = `video_start_utc + elapsed_s + fine_offset`.
 
 **ExifTool backend** (`smartroad/survey/exiftool_gps.py`, MUST)
@@ -802,6 +816,7 @@ Record `per-frame stamp for N frames` in `clock_events`. Accepted readings need 
   - the Garmin stamp (1920×1080, white text without a band) at 1920×1080, 1280×720, 854×480 and 640×360;
   - the VIOFO stamp (screenshot at 2000×1250) at 2000×1250 and 1280×800. At 960×600, Tesseract read the year as 2075, which the year check rejects; RapidOCR still read it exactly;
   - 44–363 ms per crop. The slowest call was RapidOCR's first, which loads its model.
+- **Real footage (Phase 0, 1.7).** On the user's machine, on a 2560×1600 A129 Plus front clip and a 1920×1080 Garmin download, the built-in layouts read time, position and speed on 5 of 5 frames with both engines. Tesseract took 80–90 ms per read; RapidOCR 1.4.4 took 400–800 ms. *Auto* therefore picks Tesseract, as §8.4 says.
 
 ### 8.5 Clock: where the date and time come from
 
@@ -809,8 +824,8 @@ Record `per-frame stamp for N frames` in `clock_events`. Accepted readings need 
 |---|---|---|
 | Embedded GPS clock | §8.2 alignment | `embedded` |
 | On-screen stamp | The §8.4 segment clock. Frames it doesn't cover use the per-frame stamp fallback. Then local → UTC with each segment's zone (§8.7). | `overlay` or `overlay-frame` |
-| File name | The VIOFO file-name regex (A.5) gives the local start time, then local → UTC | `filename` |
-| Container (mvhd) | `video_start_time()`. If *Container clock is local time* is on (by default, the profile's value, §8.9), treat the value as local, then local → UTC | `container` |
+| File name | The VIOFO file-name regex (A.5) gives the start time on the camera's clock, then local → UTC. Measured on the A129 Plus: the name is about one video second after the first frame (+29.5 s in a 1 fps timelapse, so about +1 s in normal video). | `filename` |
+| Container (mvhd) | `video_start_time()`, read on the camera's clock if *Container clock is local time* is on (by default, the profile's value, §8.9), then local → UTC. The profile's `container_clock_marks` says whether it is the start or the end of the recording. On the A129 Plus it is the **end**: about one video second after the last frame (+28.5 s in a 1 fps timelapse), so start = mvhd − driving duration. | `container` |
 | Manual | The date and time typed by the user (local), then local → UTC | `manual` |
 | **Auto** | Depends on the GPS source; see below | whichever was used |
 
@@ -911,6 +926,13 @@ Snap the measured speed-up to `playback_fps / r` for r ∈ {1, 2, 3, 5, 10, 15} 
 
 The mode is decided **per video**, so one folder can mix files recorded while driving with parking-mode timelapse files.
 
+**Variable speed-up (`recording_mode=variable`).** If the cluster slopes disagree by more than 5 %, no single time base fits the file. Phase 0's Garmin download measured ×49, ×57 and ×32 at 10, 50 and 90 % of the file, and showed every stamp on 2 consecutive frames, 4 s of driving apart. Such a file is edited, re-timed or recorded with a variable interval. Then:
+
+- Every graded frame takes its time and position from its own stamp (`time_source=overlay-frame`, `gps_quality=stamp-frame`), and `elapsed_s` is its stamp time minus the first graded frame's.
+- Graded frames are chosen by video time, using the median speed-up for the rate. A frame whose stamp equals the previous graded frame's is skipped: it is a duplicate.
+- A reading is accepted if the speed it implies from its neighbours (distance over stamp time) is under 200 km/h and its time doesn't run backwards, except at a cut (§8.4, step 5). Driving-time differences can't be used, because there is no single time base.
+- `videos.csv` records `speedup` as the median and the cluster slopes in `warnings`.
+
 **The user setting (Recording mode, §5.2).** Decision: it is an override, not a replacement for detection.
 
 - **What it does.** Choosing `Normal` or `Timelapse` with a rate skips detection. It is the only way to get correct times for a file that has neither a stamp nor GPS.
@@ -966,6 +988,7 @@ class SourceProfile:
     filename_patterns: tuple[re.Pattern, ...]       # names that carry a local start time (A.5)
     camera_letters: bool                            # names end in F/R/I, so "Front camera only" applies
     container_clock_local: bool                     # mvhd holds camera local time (§8.5)
+    container_clock_marks: str                      # "start" or "end" of the recording (§8.5)
     embedded_gps: str | None                        # key into GPS_READERS: "novatek", "exiftool", or None
     gpsdatetime_is_clock: bool                      # False when GPSDateTime is CreateDate + SampleTime (§8.2)
     stamp_layouts: tuple[StampLayout, ...]          # built-in first, then layouts saved from the GUI; () = no stamp
@@ -1001,14 +1024,15 @@ def delete_user_layout(profile_key: str, name: str, path: Path = ...) -> None: .
 
 | Field | VIOFO | Garmin |
 |---|---|---|
-| `detect` evidence | A Novatek `gps ` box among `moov`'s children, or a file name matching `VIOFO_NAME` (A.5) | A `GRMN\d{4}` file name, or a Garmin make string in the container. Phase 0 records which atoms real Garmin files carry. |
+| `detect` evidence | A Novatek `gps ` box among `moov`'s children, a `udta` `user` atom reading `NOVATEK` (found on the Phase 0 clip), or a file name matching `VIOFO_NAME` (A.5) | A `GRMN\d{4}` file name, or a Garmin make string in the container. Phase 0 records which atoms real Garmin files carry. |
 | `stamp_tokens` | `("VIOFO",)` (the model name on the stamp, `VIOFO A129 Plus`) | `("GARMIN",)` (the stamp starts with `GARMIN`) |
 | `filename_patterns` | `VIOFO_NAME` | None. `GRMN0007.MP4` carries no time. |
 | `camera_letters` | Yes | No |
-| `container_clock_local` | True. Phase 0 confirms it. | True until Phase 0 measures it. When a second clock exists, the 5 s comparison in §8.5 warns if this is wrong. |
+| `container_clock_local` | True: mvhd is on the camera's clock (measured in Phase 0) | True until an original Garmin file is measured; downloads have no mvhd at all |
+| `container_clock_marks` | `end` (measured: one video second after the last frame) | `start` until an original Garmin file is measured |
 | `embedded_gps` | `novatek` | `exiftool` (timed metadata track, placed by `SampleTime`) |
 | `gpsdatetime_is_clock` | True (receiver UTC) | False (§8.2) |
-| `stamp_layouts` (built-in) | `VIOFO A129 Plus`: region `(0.0, 0.955, 1.0, 1.0)`, measured with text at y 0.972–0.985, x 0.28–0.99; date order `Auto` (DMY on the sample frame); hemisphere-letter coordinates (`signed_dd=False`) | `Garmin`: region `(0.0, 0.95, 0.62, 1.0)`, measured with white text without a band at y 0.965–0.985, x 0.01–0.58, 23 px tall at 1080p; date order `Auto` (the sample, `01/11/2020`, is ambiguous: 1 November or 11 January); `signed_dd=True`, `coord_decimals=5`. Other Garmin models get saved layouts (§5.4). |
+| `stamp_layouts` (built-in) | `VIOFO A129 Plus`: region `(0.0, 0.955, 1.0, 1.0)`, measured with text at y 0.972–0.985, x 0.28–0.99; date order `Auto` (DMY on the sample frame); hemisphere-letter coordinates (`signed_dd=False`) | `Garmin`: region `(0.0, 0.95, 0.62, 1.0)`, measured with white text without a band at y 0.965–0.985, x 0.01–0.58, 23 px tall at 1080p; date order `MDY` (measured: the Day 5 download shows `01/15/2020`, so the screenshot's `01/11/2020` is 11 January 2020); `signed_dd=True`, `coord_decimals=5`. Other Garmin models get saved layouts (§5.4). |
 | Stamp text (for reference) | `84 KM/H S12.035136 E13.955326 <custom text> VIOFO A129 Plus <plate> 15-03-2025 10:56:44` | `GARMIN 01/11/2020 07:17:05 -26.36774 27.31358 70 KM/H` |
 | `capture_rates` | `(1, 2, 3, 5, 10)` | `(1, 2, 3, 5, 10, 15)` until Phase 0 measures Travelapse |
 
@@ -1050,7 +1074,7 @@ The Garmin footage for this work comes from YouTube. A download or any re-encode
 - **Date order.** The container date is not used as a reference (§8.4, Date order step 2). An ambiguous date such as `01/11/2020` with no day above 12 in the video falls to the previous video of the same profile, then to DMY, with a warning.
 - **UTC offset.** It can't be measured without a GPS clock, so it comes from the setting (§8.7, 4.3), with a warning naming the offset used. Set it for the place the video was recorded: the Garmin sample is in South Africa, UTC+2.
 - **Cuts.** An uploader may join clips. The clock fit treats a step with a position jump as a cut, not a clock correction (§8.4 step 5, A.7). Title cards and overlays without a stamp give rows with blank time and position (`time_source=none`, `gps_quality=missing`), and their detections are still written.
-- **Re-timed uploads.** An upload played faster than real time is detected like a timelapse (§8.8): ×2 playback is `timelapse ×2`. A speed-up that matches no capture rate is kept as measured, with a warning.
+- **Re-timed uploads.** An upload played faster than real time is detected like a timelapse (§8.8): ×2 playback is `timelapse ×2`. A speed-up that matches no capture rate is kept as measured, with a warning. When the speed-up varies along the file, as on the Phase 0 Garmin download, the video is `variable` (§8.8) and each graded frame uses its own stamp.
 - **Detection quality.** YouTube's compression removes fine cracks, so downloaded footage finds fewer distresses than the camera's own file and its PCI reads high. Use downloaded footage to test the pipeline (stamp, clock, positions, CSVs), not to grade roads. Download the highest resolution offered: the Garmin stamp still read correctly at 640×360, but detection needs the detail.
 - **Copyright and privacy.** Don't commit downloaded footage or frames from it to this public repository. Tests use synthetic clips and stamp text.
 
@@ -1421,8 +1445,8 @@ This scenario was run end to end with the 1.2 code (A.8): detection ×30 from 3 
 
 The default is used until each question is answered.
 
-1. **Camera time zone setting.** Default: +1.0 h. Phase 0 confirms it.
-2. **Date format on the stamp.** Default: DD-MM-YYYY, as on the sample frame.
+1. **Camera time zone setting.** Phase 0 (2026-11-07): the A129 Plus's stamp runs on **UTC**, not UTC+1. Stamp minus GPS was −11.5 s by block timing, which the fix sitting about 12 s into its timelapse window explains; the position-based check (A.9) is to confirm it to the second. Open: is the camera's Time Zone menu set to GMT+0? Files with GPS measure their offset anyway; the setting's default (+1.0) only applies without GPS.
+2. **Date format on the stamp.** Phase 0: VIOFO writes DD-MM-YYYY (`15-03-2025`); Garmin writes MM/DD/YYYY (`01/15/2020`).
 3. **Rear-camera files (`…R.MP4`).** Default: skipped, front camera only.
 4. **Meaning of frames per second.** Answered 2026-11-07: keep sampling per second of driving as the default, one selector for grading and saving. Use the GPS source to tie each graded frame's video time to its position and clock time. Distance-based sampling is not planned.
 5. **Stamp test image.** `tests/data/stamp_a129plus_masked.png` is supplied with this spec. It is the 2560×72 stamp strip from the sample frame, with the plate and custom text painted out. It still shows a position and a date. Should it be committed to this public repo? Default: no, and the test that uses it is skipped.
@@ -1433,6 +1457,8 @@ The default is used until each question is answered.
    - the GPS block count against the frame count (expect one block per *video* second);
    - whether the stamp changes on every frame;
    - whether the file names differ from those of normal recordings.
+
+   Phase 0 (2026-11-07), on `20250315112600_000694F.MP4`: a 1 fps capture played at 30 fps (×30); 60 blocks for 60 s of video, one per video second; the stamp changes on every frame; the file name follows the same pattern as normal recordings, so only the stamp or GPS can tell the mode. A normal-speed clip is still wanted, to confirm the container clock and file-name offsets at ×1.
 10. **Garmin model.** Answered 2026-11-07: unknown (YouTube footage). The Garmin profile follows the screenshot's stamp. Another layout is added to the profile when footage with it turns up.
 11. **Background exports.** Answered 2026-11-07: yes, exports run in the background (§5.7).
 12. **Camera settings.** Answered 2026-11-07: user-set in the sidebar as in the original GUI, with the bonnet exclusion calculated from them (§5.2). Profiles carry no camera settings.
@@ -1670,6 +1696,8 @@ Tables 1 and 2 pass with `signed_dd` off (the default) and on.
 | `GARMIN 10/25/2025 04:23:15 PM 47.60205 -122.32427 35 MPH` | MDY | 56.32704 | 47.60205 | -122.32427 | 2025-10-25 16:23:15 | no | sdd | Garmin |
 | `GARMIN 25/10/2025 16:23:15 -26.36774 27.31358 0 KM/H` | DMY | 0 | -26.36774 | 27.31358 | 2025-10-25 16:23:15 | no | sdd | Garmin |
 | `84 KM/H S12.035136 E13.955326 CUSTOM V1OFO A129 PIusAA-00-BB 15-03-2025 10:56:44` (RapidOCR, real frame) | DMY | 84 | -12.035136 | 13.955326 | 2025-03-15 10:56:44 | no | dd | none |
+| `GARMIN 01/15/2020 05:45:44 -14.78312 13.75958 106 KM/H` (Tesseract, Phase 0 download) | MDY | 106 | -14.78312 | 13.75958 | 2020-01-15 05:45:44 | no | sdd | Garmin |
+| `GARMIN 01/15/2020 13:53:19 -11.19516 13.84973 11KM/H` (Tesseract, space lost) | MDY | 11 | -11.19516 | 13.84973 | 2020-01-15 13:53:19 | no | sdd | Garmin |
 
 ### A.2 Crop and OCR settings
 
@@ -1746,7 +1774,7 @@ To convert DDMM.MMMM to degrees: `d = int(v // 100); deg = d + (v - 100 * d) / 6
 
 **Validation.** A synthetic MP4 was built with 1 void block and 6 valid blocks. ExifTool 13.61 reported `GPSType 3`. ExifTool and the built-in decoder returned the same first fix: −12.0351359, 13.9553263, 84.0 km/h, 2025-03-15T09:56:38Z. ExifTool skipped the void block, so its Doc1 was block 1; the built-in decoder kept the block index.
 
-**Gotcha.** When the `gps ` box was the *last* child of `moov` (after `udta`), ExifTool ignored it. The built-in reader must search every child of `moov`.
+**Gotcha, narrowed in 1.7.** In a synthetic file whose `freeGPS` blocks sat after `moov`, ExifTool ignored a `gps ` box placed last in `moov`, after `udta`. On the real A129 Plus file the box is last too, but the blocks sit inside `mdat`, and ExifTool 12.76 found all 60 fixes. The built-in reader must still search every child of `moov`.
 
 ### A.4 ExifTool output
 
@@ -2155,3 +2183,30 @@ def sample_frames(n_frames: int, tb: TimeBase, per_driving_s: float, max_frames:
 - per-frame stamp latitudes are exact.
 
 The same readings fed to the 1.1 clock fit, on video time, produced `clock fit failed: no 3 consistent readings`.
+
+### A.9 Clock offset by position (new in 1.7)
+
+The stamp and the `gps ` blocks come from the same receiver, so every position the stamp shows lies on the GPS track. Finding that point on the track gives the UTC time at which the vehicle was there, and the stamp's own time at that frame gives the clock offset. Nothing is assumed about where in its video second a block's fix was taken. Reference implementation, from `scripts/probe_dashcam.py`:
+
+```python
+def track_time_at(fixes: list[dict], lat: float, lon: float, max_gap_s: float = 120) -> tuple[float, float] | None:
+    """The point of the GPS track (fixes joined by straight lines) nearest to (lat, lon):
+    its UTC time in seconds and its distance in metres."""
+    kx, ky = math.cos(math.radians(lat)) * 111_320.0, 110_540.0
+    pts = [(f["utc"].timestamp(), (f["lon"] - lon) * kx, (f["lat"] - lat) * ky) for f in fixes]
+    best = None
+    for (ta, ax, ay), (tb, bx, by) in zip(pts, pts[1:]):
+        if not 0 < tb - ta <= max_gap_s:
+            continue
+        dx, dy = bx - ax, by - ay
+        l2 = dx * dx + dy * dy
+        w = 0.0 if l2 == 0 else min(1.0, max(0.0, -(ax * dx + ay * dy) / l2))
+        d = math.hypot(ax + w * dx, ay + w * dy)
+        if best is None or d < best[1]:
+            best = (ta + w * (tb - ta), d)
+    return best
+```
+
+- **Offset:** for each stamp reading with a position within 100 m of the track, `offset = (stamp local + 0.5 s) − track UTC`. Take the median. The zone is the median rounded to 15 min, and the rest is the camera clock's error.
+- **Fix position in its window:** `p = (fix UTC + offset − stamp clock at the first frame) − speed-up × block index`, in seconds of driving, median over the fixes (§8.2).
+- **Checked** on a synthetic clip built like the Phase 0 VIOFO timelapse: camera clock on UTC, each fix 12 s into its 30-s window, mvhd one video second after the last frame. The block-timing method gave −11.5 s, the file name +29.5 s and mvhd +28.5 s, as on the real clip. The position method gave an offset of +0.5 s, the whole-second rounding of a synthetic stamp, and `p` = 12.0 s.

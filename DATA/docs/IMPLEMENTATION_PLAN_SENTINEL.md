@@ -16,6 +16,7 @@ Scope: **VIOFO and Garmin dashcams.** Phone footage is out of scope; the source-
 | 2026-11-07 | Added: speed-ups that don't change results, stamp reads from decoded frames, stamp layouts saved from the GUI, distance lines | M15–M18 |
 | 2026-11-07 | The machine is Ubuntu: Tesseract and ExifTool from apt | §5.4, §12 Q6 |
 | 2026-11-07 | Dedicated `Input/` and `Output/` folders at the repository root; git keeps only their READMEs | §6.0 |
+| 2026-11-07 | Phase 0 on real footage: the built-in GPS reader works, mvhd marks the end, the VIOFO clock runs on UTC, Garmin is MDY, the Garmin download has a variable speed-up | spec 1.7, `DASHCAM_NOTES.md` |
 
 ## 1. What 1.5 changed, and why
 

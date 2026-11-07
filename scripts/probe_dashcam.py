@@ -428,7 +428,8 @@ LAYOUTS = (Layout("VIOFO A129 Plus", (0.0, 0.955, 1.0, 1.0)),
            Layout("Garmin", (0.0, 0.95, 0.62, 1.0), True, 5),
            Layout("Wide bottom strip", (0.0, 0.92, 1.0, 1.0), True, None))
 
-MAKE_TOKENS = re.compile(r"V[I1l]OFO|GARMIN|A1[123]9|P[lI1]us|Pro|Duo|KM\s*/?\s*H|MPH", re.I)
+MAKE_TOKENS = re.compile(r"V[I1l|][O0]F[O0]|G[A4]RM[I1l|][NM]|A1[123]9|P[lI1]us|Pro|Duo|KM\s*/?\s*H|MPH", re.I)
+MAKE_NAMES = {"VIOFO": re.compile(r"V[I1L|][O0]F[O0]"), "GARMIN": re.compile(r"G[A4]RM[I1L|][NM]")}
 
 
 def mask_text(text: str, layout: Layout) -> str:
@@ -771,6 +772,24 @@ def novatek_gps(path: Path, gps_box: dict, args) -> dict:
     return out
 
 
+def track_time_at(fixes: list[dict], lat: float, lon: float, max_gap_s: float = 120) -> tuple[float, float] | None:
+    """The point of the GPS track (fixes joined by straight lines) nearest to (lat, lon):
+    its UTC time in seconds and its distance in metres."""
+    kx, ky = math.cos(math.radians(lat)) * 111_320.0, 110_540.0
+    pts = [(f["utc"].timestamp(), (f["lon"] - lon) * kx, (f["lat"] - lat) * ky) for f in fixes]
+    best = None
+    for (ta, ax, ay), (tb, bx, by) in zip(pts, pts[1:]):
+        if not 0 < tb - ta <= max_gap_s:
+            continue
+        dx, dy = bx - ax, by - ay
+        l2 = dx * dx + dy * dy
+        w = 0.0 if l2 == 0 else min(1.0, max(0.0, -(ax * dx + ay * dy) / l2))
+        d = math.hypot(ax + w * dx, ay + w * dy)
+        if best is None or d < best[1]:
+            best = (ta + w * (tb - ta), d)
+    return best
+
+
 def gps_position_at(fixes: list[dict], t_video: float) -> tuple[float, float] | None:
     """Fix i is taken to sit at video second i (spec §8.2); interpolate between neighbours."""
     by_block = {f["block"]: f for f in fixes}
@@ -956,20 +975,32 @@ def video_facts(path: Path, args) -> dict:
     return out
 
 
-def static_map(path: Path, n: int, clip_dir: Path, samples: int) -> dict:
-    """Per-pixel spread over frames across the clip. The road changes, the bonnet doesn't."""
+def static_map(path: Path, n: int, fps: float, speedup: float, clip_dir: Path, windows: int) -> dict:
+    """Per-pixel spread over short stretches of the clip: 6 frames about 1 s of driving apart, in
+    `windows` places. Within a stretch the road moves and the light doesn't, so the bonnet stays dark;
+    across a whole timelapse the light changes and the bonnet would look busy."""
+    step = max(1, round(fps / max(speedup, 1e-6)))
     cap = open_video(path)
-    stack = []
-    for i in range(samples):
-        frame = read_at(cap, int(n * (i + 0.5) / samples))
-        if frame is not None:
-            g = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            stack.append(cv2.resize(g, (320, round(320 * g.shape[0] / g.shape[1])),
-                                    interpolation=cv2.INTER_AREA).astype(np.float32))
+    spreads = []
+    for w in range(windows):
+        start = int(max(0, n - 6 * step) * (w + 0.5) / windows)
+        cap.set(cv2.CAP_PROP_POS_FRAMES, start)
+        stack = []
+        for j in range(5 * step + 1):
+            if not cap.grab():
+                break
+            if j % step == 0:
+                ok, frame = cap.retrieve()
+                if ok:
+                    g = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                    stack.append(cv2.resize(g, (320, round(320 * g.shape[0] / g.shape[1])),
+                                            interpolation=cv2.INTER_AREA).astype(np.float32))
+        if len(stack) >= 4:
+            spreads.append(np.stack(stack).std(axis=0))
     cap.release()
-    if len(stack) < 5:
+    if len(spreads) < 2:
         return {"error": "too few frames"}
-    spread = np.stack(stack).std(axis=0)
+    spread = np.mean(spreads, axis=0)
     h, w = spread.shape
     profile = np.median(spread[:, int(0.2 * w):int(0.8 * w)], axis=1)
     reference = float(np.percentile(profile[int(0.3 * h):int(0.9 * h)], 80))
@@ -986,7 +1017,8 @@ def static_map(path: Path, n: int, clip_dir: Path, samples: int) -> dict:
     if bonnet:
         cv2.line(img, (0, bonnet), (w - 1, bonnet), (0, 0, 255), 1)
     write_image(clip_dir / "static_map.png", img)
-    return {"frames": len(stack), "bonnet_from": round(bonnet / h, 3) if bonnet else None,
+    return {"frames": len(spreads) * 6, "windows": len(spreads), "step_frames": step,
+            "bonnet_from": round(bonnet / h, 3) if bonnet else None,
             "road_spread": round(reference, 1), "rows": [round(float(v), 1) for v in profile[::max(1, h // 50)]]}
 
 
@@ -1067,8 +1099,8 @@ def stamp_section(path: Path, video: dict, engines: list, clip_dir: Path, args) 
     out["best"] = {"layout": best_layout, "engine": best_engine, "score": totals[(best_layout, best_engine)],
                    "max_score": 5 * len(samples), "roi": lay.roi}
     texts = [rd["text"] for s in samples for rd in s["reads"] if rd["layout"] == best_layout]
-    norm = " ".join(texts).upper().replace(" ", "").replace("1", "I").replace("0", "O")
-    out["tokens"] = [t for t in ("VIOFO", "GARMIN") if t in norm]
+    norm = " ".join(texts).upper().replace(" ", "")
+    out["tokens"] = [t for t, rx in MAKE_NAMES.items() if rx.search(norm)]
     best_reads = [rd for s in samples for rd in s["reads"] if rd["layout"] == best_layout and rd["engine"] == best_engine]
     dated = [rd["date_ambiguous"] for rd in best_reads if rd["local"]]
     out["date_ambiguous_all"] = bool(dated) and all(dated)
@@ -1145,6 +1177,29 @@ def compare_clocks(res: dict, args) -> dict:
         if dists:
             out["stamp_vs_gps_m"] = {"reads": len(dists), "median": round(statistics.median(dists), 1),
                                      "max": round(max(dists), 1)}
+        # The same receiver feeds the stamp and the GPS blocks, so each stamp position lies on the GPS track.
+        # The UTC at that point, against the stamp's own time, gives the clock offset without assuming
+        # where in its video second a block's fix was taken.
+        hits = []
+        for r in reads:
+            if r.get("lat") is not None:
+                hit = track_time_at(gps.get("fixes", []), r["lat"], r["lon"])
+                if hit and hit[1] <= 100:
+                    utc = dt.datetime.fromtimestamp(hit[0], UTC).replace(tzinfo=None)
+                    hits.append(((r["local"] - utc).total_seconds() + 0.5, hit[1]))
+        if len(hits) >= 3:
+            off = statistics.median(h[0] for h in hits)
+            zone = round(off / 900) * 900
+            out["by_position"] = {"reads": len(hits), "stamp_minus_gps_s": round(off, 1),
+                                  "utc_offset": fmt_offset(zone), "residual_s": round(off - zone, 1),
+                                  "spread_s": round(max(h[0] for h in hits) - min(h[0] for h in hits), 1),
+                                  "median_distance_m": round(statistics.median(h[1] for h in hits), 1)}
+            # Where each block's fix sits inside its video second, in seconds of driving
+            local0 = out["stamp_local_start"]
+            phases = [((f["utc"].replace(tzinfo=None) + dt.timedelta(seconds=off) - local0).total_seconds()
+                       - speed * f["block"]) for f in gps.get("fixes", [])]
+            if phases:
+                out["by_position"]["fix_into_block_s"] = round(statistics.median(phases), 1)
     mvhd = (res.get("container") or {}).get("mvhd") or {}
     duration = (video.get("duration_s") or 0) * speed
     if mvhd.get("created"):
@@ -1164,6 +1219,12 @@ def compare_clocks(res: dict, args) -> dict:
         name_start = (res.get("file") or {}).get("name_local_start")
         if name_start:
             out["mvhd_minus_name_s"] = round((created - name_start).total_seconds(), 1)
+        start = out.get("stamp_local_start") or name_start
+        if start and duration:
+            d_start = (created - start).total_seconds()
+            d_end = (created - start - dt.timedelta(seconds=duration)).total_seconds()
+            out["mvhd_marks"] = "end" if abs(d_end) < abs(d_start) else "start"
+            out["mvhd_minus_marked_s"] = round(d_end if out["mvhd_marks"] == "end" else d_start, 1)
     name_start = (res.get("file") or {}).get("name_local_start")
     if name_start and "stamp_local_start" in out:
         out["name_minus_stamp_s"] = round((name_start - out["stamp_local_start"]).total_seconds(), 1)
@@ -1232,7 +1293,10 @@ def probe_clip(path: Path, args, tools: dict, engines: list, out_root: Path) -> 
     if res.get("video") and engines:
         step("stamp", lambda: stamp_section(path, res["video"], engines, clip_dir, args))
     if res.get("video"):
-        step("static", lambda: static_map(path, res["video"]["frames"], clip_dir, args.static_frames))
+        speedup = ((res.get("stamp") or {}).get("timebase") or {}).get("speedup") \
+            or (res.get("gps") or {}).get("slope_s_per_block") or 1.0
+        step("static", lambda: static_map(path, res["video"]["frames"], res["video"]["fps"], speedup,
+                                          clip_dir, args.static_windows))
     step("clocks", lambda: compare_clocks(res, args))
     res["source"] = source_guess(res)
     res["reencode_hints"] = reencode_hints(res)
@@ -1263,23 +1327,32 @@ def probe_clip(path: Path, args, tools: dict, engines: list, out_root: Path) -> 
 def answers(res: dict) -> list[str]:
     a = []
     src, why = res["source"]
-    a.append(f"**Source:** {src} ({why})")
     v, s, g, c, e = (res.get(k) or {} for k in ("video", "stamp", "gps", "clocks", "exiftool"))
+    a.append(f"**Source:** {src} ({why})")
     tb = s.get("timebase")
     if tb:
         extra = f"; GPS blocks say ×{c['gps_speedup']:g}" if c.get("gps_speedup") else ""
         a.append(f"**Recording mode:** {tb['mode']} ×{tb['speedup']:g} from the stamp clusters "
-                 f"(slopes {tb['cluster_slopes']}){extra}" + (f"; {'; '.join(tb['notes'])}" if tb["notes"] else ""))
+                 f"(slopes {tb['cluster_slopes']}){extra}" + (f"; {'; '.join(tb['notes'])}" if tb["notes"] else "")
+                 + ("; **the speed-up varies along the file: an edited or re-timed video, so each frame's own "
+                    "stamp has to give its time**" if any("differs" in n for n in tb["notes"]) else ""))
     elif c.get("gps_speedup"):
         a.append(f"**Recording mode:** GPS blocks say ×{c['gps_speedup']:g} per video second")
     if c.get("utc_offset"):
         ok = "matches" if abs(c["residual_s"]) <= 1.5 else "does NOT match"
         a.append(f"**Camera UTC offset:** {c['utc_offset']} (stamp − GPS = {c['stamp_minus_gps_s']:+.1f} s; "
                  f"left over after the zone: {c['residual_s']:+.1f} s, so the stamp time {ok} the GPS time)")
+    bp = c.get("by_position")
+    if bp:
+        ok = "matches" if abs(bp["residual_s"]) <= 1.5 else "does NOT match"
+        a.append(f"**Camera UTC offset, by position:** {bp['utc_offset']} (stamp − GPS = {bp['stamp_minus_gps_s']:+.1f} s "
+                 f"over {bp['reads']} reads, spread {bp['spread_s']} s, stamps {bp['median_distance_m']} m from the "
+                 f"track, so the stamp time {ok} the GPS time); each block's fix sits "
+                 f"{bp.get('fix_into_block_s')} s of driving into its video second")
     if c.get("stamp_vs_gps_m"):
         d = c["stamp_vs_gps_m"]
-        a.append(f"**Stamp vs GPS position:** median {d['median']} m, max {d['max']} m over {d['reads']} reads "
-                 f"(no lag correction)")
+        a.append(f"**Stamp vs GPS position, fix i placed at video second i:** median {d['median']} m, "
+                 f"max {d['max']} m over {d['reads']} reads")
     mv = (res.get("container") or {}).get("mvhd") or {}
     if mv.get("created"):
         what = c.get("mvhd_is")
@@ -1288,6 +1361,9 @@ def answers(res: dict) -> list[str]:
         verdict = (f"holds the **{what}**" if what else
                    ("matches neither the stamp nor the GPS clock within 2 min" if diffs else
                     "no stamp or GPS clock to compare with"))
+        if c.get("mvhd_marks"):
+            verdict = (f"marks the **{c['mvhd_marks']} of the recording** on the camera's clock "
+                       f"({c['mvhd_minus_marked_s']:+.1f} s from it); closest clock: {what or 'none'}")
         a.append(f"**Container clock (mvhd):** {fmt_dt(mv['created'])} as written; {verdict}"
                  + (f" (mvhd minus: {diffs}{named})" if diffs or named else ""))
     elif mv:
@@ -1307,7 +1383,9 @@ def answers(res: dict) -> list[str]:
                  + (f" for {v['duration_s']:.1f} s of video = {per:.2f} per video second" if per else "")
                  + f"; {', '.join(f'{k} {n}' for k, n in g['counts'].items())}; markers at "
                  f"{', '.join(g['markers']) or '–'}; layout {'OK' if g.get('layout_ok') else 'NOT OK'}"
-                 + ("; the `gps ` box is the last child of `moov`, where ExifTool ignores it (spec A.3)"
+                 + (("; the `gps ` box is the last child of `moov`"
+                     + (" and ExifTool found nothing (spec A.3)" if e and not e.get("fixes") else
+                        ", and ExifTool found the fixes anyway" if e else ""))
                     if (res.get("container") or {}).get("gps_box", {}).get("last") else ""))
     elif res.get("container"):
         a.append("**Embedded GPS (built-in, A.3):** no `gps ` box in `moov`")
@@ -1445,7 +1523,8 @@ def clip_report(res: dict) -> list[str]:
                                          for k, v in cl.items()] + ["```", ""]
     st = res.get("static") or {}
     if st.get("rows"):
-        L += ["### Static map", "", f"Spread of each row over {st['frames']} frames (every ~4 % of the "
+        L += ["### Static map", "", f"Spread of each row over {st.get('windows')} stretches of 6 frames, "
+              f"{st.get('step_frames')} frame(s) apart (every ~4 % of the "
               f"height, top to bottom): {st['rows'][::2]}. Road spread {st['road_spread']}; bonnet estimate "
               f"{st['bonnet_from']}. See `static_map.png` (dark = never changes).", ""]
     L += [f"Step times (s): {res.get('timings_s')}", ""]
@@ -1508,7 +1587,8 @@ def main() -> int:
     ap.add_argument("--date-order", choices=("DMY", "MDY"), default="DMY", help="for ambiguous dates")
     ap.add_argument("--roi", help="an extra stamp region to try, as x0,y0,x1,y1 fractions")
     ap.add_argument("--seek-check", type=int, default=300, help="frames decoded for the seek check (default 300)")
-    ap.add_argument("--static-frames", type=int, default=40, help="frames for the static map (default 40)")
+    ap.add_argument("--static-windows", type=int, default=8,
+                    help="short stretches of 6 frames for the static map (default 8)")
     ap.add_argument("--raw-text", action="store_true", help="keep the stamp text unmasked (for your eyes only)")
     ap.add_argument("--coarse", action="store_true", help="round positions to 0.01° in the outputs")
     args = ap.parse_args()
