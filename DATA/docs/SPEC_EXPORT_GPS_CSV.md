@@ -1,7 +1,17 @@
 # Smart Road: frame export, CSV export and GPS/time tagging
 
 **Spec for Claude Code (VS Code).** Target repo: `spgamaral-a11y/smart-road` at commit `af57388`.
-Version 1.3, 2026-11-07. Suggested location in the repo: `DATA/docs/SPEC_EXPORT_GPS_CSV.md`.
+Version 1.4, 2026-11-07. Suggested location in the repo: `DATA/docs/SPEC_EXPORT_GPS_CSV.md`.
+
+**Changes in 1.4: real stamps, downloaded footage, background exports** (checked against the two screenshots supplied on 2026-11-07; see `DATA/docs/DASHCAM_NOTES.md`)
+
+- **The Garmin stamp needed a new coordinate format.** The real Garmin stamp reads `GARMIN 01/11/2020 07:17:05 -26.36774 27.31358 70 KM/H`: signed decimal degrees with no hemisphere letter. Both OCR engines read it exactly, but the 1.3 parser returned **no position** for it. The parser gains a signed format, switched on by the Garmin profile, with the profile's decimal count to split run-together digits (A.1, Table 3). Speed is now read last, from the text left over, and values above 300 km/h are rejected.
+- **Profiles from the real stamps.** Stamp regions, tokens (`VIOFO`, `GARMIN`) and camera presets (horizon, sky and hood cut-offs) are measured from the screenshots (§8.9). A profile can now be recognised from its stamp text when the container carries no evidence.
+- **Downloaded and edited footage** (§8.10). The Garmin footage comes from YouTube, which keeps only the burned-in stamp: no camera file name, container clock or embedded GPS. Such files use the stamp alone. Edited videos can contain cuts, which the clock fit now recognises instead of re-basing the earlier frames onto a later clip's clock (A.7). Timelapse detection reads three clusters of frames, so a title card or a cut can't bias it (A.8).
+- **Exports run in the background** (§5.7). Changing a setting no longer stops a running export.
+- **Per-video part files** (§6.3). Each video's rows are written to their own files first, so a CSV that Excel has open can't make a run fail.
+- **Locating a grading.** GPS source defaults to `Auto`. Every graded frame row already carries its video time, clock time and position; a `map_url` column is added to `frames.csv` and `detections.csv`, and the preview shows clock time and position per graded frame once they are known (S7).
+- **Sampling stays per second of driving.** Distance-based sampling is not planned.
 
 **Changes in 1.3: source profiles** (§8.9)
 
@@ -137,6 +147,9 @@ Everything camera-specific is a default, never a hard-coded assumption.
 | Batches whose results can be searched and analysed | A new input mode, **Batch folder**. Runs can be resumed, and each video gets a stable `video_id`. A CLI and a merge tool reuse the same pipeline. |
 | Timelapse video (1 frame per second) must work too | Each video gets a time base. Driving time (`elapsed_s`) drives every clock and position calculation, and frames are sampled by driving time. The recording mode is detected per video; the user setting is an override that is still checked (§8.8). |
 | Footage from more than one dashcam make: VIOFO and Garmin now, others later | Each video gets a source profile, detected from its file name and container, with a sidebar override that is still checked. The profile holds everything make-specific, so adding a make later means adding a profile, not changing the pipeline (§8.9). |
+| Find the GPS location and clock time of a particular grading | Each graded frame (one per second of driving by default) gets its video time, driving time, local and UTC clock time, position and speed in `frames.csv`, and every detection repeats them in `detections.csv`, with a `map_url` link. GPS source defaults to `Auto` (§5.4). The preview shows the same per graded frame once *Check location & time* has run (S7). |
+| Exports can run in the background | Run export and Run batch start a background job; settings can change while it runs and apply to the next job (§5.7). |
+| Garmin footage downloaded from YouTube | Downloads keep only the burned-in stamp, so time and position come from the stamp alone; edited videos may contain cuts (§8.10). |
 
 ## 4. Scope
 
@@ -166,6 +179,8 @@ Everything camera-specific is a default, never a hard-coded assumption.
   - a `SourceProfile` registry, with a VIOFO and a Garmin profile;
   - per-video detection, with the user setting as an override that is still checked;
   - the profile and the camera geometry used are recorded per video in `videos.csv`.
+- **M13** Background exports (§5.7): a job registry, a progress panel that survives setting changes and page reloads, Stop and Resume.
+- **M14** Downloaded and edited footage (§8.10): stamp-only time and position, recognition of the profile from the stamp, cuts.
 
 **SHOULD**
 
@@ -175,6 +190,7 @@ Everything camera-specific is a default, never a hard-coded assumption.
 - **S4** A `quantity` column per detection: m², m or count.
 - **S5** A `tracks/<video>.gpx` file with the track actually used.
 - **S6** A README section, "Export: frames, CSV and GPS".
+- **S7** Once *Check location & time* has run for a video, the preview's all-frames table gains `Clock time`, `Lat`, `Lon` and `Map` columns, and the worst-frame heading shows its clock time and position.
 
 **COULD**
 
@@ -191,6 +207,7 @@ Everything camera-specific is a default, never a hard-coded assumption.
 - Lens undistortion.
 - Batch mode on the Hugging Face Space.
 - Phone footage (iPhone, Android). It would be added later as a new profile in the registry (§8.9).
+- Distance-based sampling. Frames are sampled per second of driving (§5.2).
 
 ## 5. GUI
 
@@ -257,7 +274,8 @@ Everything camera-specific is a default, never a hard-coded assumption.
 | Source profile | Auto | `Auto (per file)`, or one of the registered profiles: `VIOFO`, `Garmin`. Help text: "Auto recognises each file's make. Choose one only if detection gets a file wrong." Rules in §8.9. |
 | If not recognised | VIOFO | The profile used, with a warning, when Auto recognises no registered make. |
 | Camera geometry for export | Sidebar values | `Sidebar values` uses the Camera geometry and hood cut-off sliders for every video, as before. `From profile (per video)` uses each video's profile preset, for batches that mix makes (§8.9). The preview always uses the sidebar values. |
-| GPS source | None | `None`, `Embedded in video`, `GPX file(s)`, or `On-screen stamp (OCR)`. |
+| GPS source | Auto | `Auto`, `None`, `Embedded in video`, `GPX file(s)`, or `On-screen stamp (OCR)`. **Auto**, per video: GPX if GPX files are given; otherwise the profile's embedded GPS if the file has it; otherwise the on-screen stamp if an OCR engine is installed; otherwise none. The source used is written to `gps_source`. |
+| Downloaded / re-encoded video | Auto | `Auto`, `Yes` or `No`. **Yes** means the file name, container clock and embedded GPS are not the camera's, so only the stamp is used (§8.10). **Auto** answers Yes when the profile was recognised from the stamp alone. |
 | Date & time source | Auto | `Auto`, `Embedded GPS clock`, `On-screen stamp (OCR)`, `File name`, `Container (mvhd)`, or `Manual`. Rules in §8.5. |
 | Camera clock UTC offset at start (h) | +1.0 | From −12 to +14, in steps of 0.25. Help text: "Stamps and file names use the camera's local time. Angola (WAT) is UTC+1 with no daylight saving." Used only when the offset can't be measured or carried over from the previous video (§8.7). |
 | Local time columns | Camera's clock | `Camera's clock` means what the camera showed, with the offset per row. `Fixed UTC offset` plus a number gives every row the same zone, for a report in one zone (§8.7). |
@@ -288,7 +306,7 @@ If an optional dependency is missing, its option stays visible but disabled. Its
 
 ### 5.5 Main area: single video (Drive video mode)
 
-The existing preview stays as it is: strip, chart, worst frame and all-frames table. Add a new section, `#### Export this video`, below it. It contains:
+The existing preview stays as it is: strip, chart, worst frame and all-frames table. Once *Check location & time* has run for the video, the all-frames table gains `Clock time`, `Lat`, `Lon` and `Map` columns, and the worst-frame heading shows its clock time and position (S7). Add a new section, `#### Export this video`, below it. It contains:
 
 - **A one-line plan**, for example `Whole video · 1 fps → ~180 frames · GPS: Embedded · Output: Output/20261106-193012_benguela`.
 - **Check location & time.** This runs §8 only, with no detection, and shows:
@@ -300,7 +318,7 @@ The existing preview stays as it is: strip, chart, worst frame and all-frames ta
   - for OCR: the first stamp crop (`st.image`), the raw OCR text and the parsed values.
 
   Cache the result in `st.session_state`, keyed on `(video_id, geo settings)`, so that **Run export** can reuse it.
-- **Run export**, the primary button. While it runs, show a progress bar: `Frame i of N · ETA mm:ss`. When it finishes, show:
+- **Run export**, the primary button. It starts a background job (§5.7) and returns at once. The job panel shows `Frame i of N · ETA mm:ss`. When the job finishes, show:
   - metrics: frames, detections, mean and minimum PCI, GPS coverage %;
   - the condition map (S2);
   - a table of detections by class;
@@ -314,14 +332,19 @@ Sample and Upload sources are written to a temporary file first, as today, and d
 - Show the scan table. Order the videos by the recording time in their file names, and by name when there is none.
 - **Check location & time** works on one video chosen from the scan table.
 - **Run target:** `New run` or `Resume: <run folder>`. The Resume list shows the run folders under the output folder whose `run.json` has `"finished": null`.
-- **Run batch** shows overall progress (`video k of K`) and the progress of the current video. If a video fails, it is recorded in `videos.csv` with `status=failed` and an `error`, and the batch carries on with the next one.
+- **Run batch** starts a background job (§5.7). Its panel shows overall progress (`video k of K`) and the progress of the current video. If a video fails, it is recorded in `videos.csv` with `status=failed` and an `error`, and the batch carries on with the next one.
 - When the batch finishes, show the same summary as §5.5, computed over all the videos.
 
 ### 5.7 Behaviour rules
 
-- **Interruptions.** Streamlit stops the script whenever any widget changes. While a run is in progress, show: `Export running. Changing a setting stops it. Finished videos are kept; use Resume to continue.`
-  - Don't swallow Streamlit's stop or rerun exceptions in per-video `except` blocks.
-  - Check whether these exceptions derive from `BaseException` in the installed Streamlit version. If they don't, re-raise them explicitly.
+- **Background jobs** (`smartroad/export/jobs.py`). Streamlit reruns the script whenever a widget changes, so the export must not run inside the script.
+  - **Run export** and **Run batch** submit a job to a registry held in `st.cache_resource`. The job runs `process_video` or `process_batch` on a worker thread, with the `ExportSettings` frozen at submit time, and the button returns at once.
+  - A progress panel, an `@st.fragment(run_every="2s")`, reads the job's state and shows `video k of K · frame i of N · ETA mm:ss`, the last warning and a **Stop** button. Changing a setting doesn't touch a running job; it applies to the next one. Show: `Export running in the background. Settings you change now apply to the next export.`
+  - The job writes `progress.json` into the run folder at least every 2 s, so a reloaded page or a second browser tab finds it again.
+  - **Stop** sets `should_stop`. The current video is abandoned (its part files are not written) and finished videos are kept. If the server process ends, the job ends with it, and **Resume** continues from the part files (§6.3).
+  - One job at a time per output folder. A second submit is refused with a message naming the running job.
+  - The job loads its own detector with `make_detector`, so the preview and the job never share a model object: YOLO predictors are not thread-safe. Two model instances fit easily in GPU memory; on CPU, the preview slows the job down while both run.
+  - The pipeline never calls `st.*` (it already must not import Streamlit). Its progress and stop callbacks are the only link to the GUI.
 - **Memory.** The export path never uses `st.cache_data` on video bytes and never keeps all frames in memory. For each frame it processes, saves, buffers the rows and moves on.
 - **Failures.**
   - A failed location or time source never stops a video. The columns are left blank, and the reason is shown in the UI and written to `videos.csv` under `warnings`.
@@ -338,6 +361,11 @@ Output/
 └── 20261106-193012_benguela/            run folder: YYYYMMDD-HHMMSS[_label]
     ├── run.json
     ├── run.log
+    ├── progress.json                                       background job state (§5.7)
+    ├── parts/3f9a0c1d2b4e5f60/                             one folder per video_id (§6.3)
+    │   ├── frames.csv
+    │   ├── detections.csv
+    │   └── video.json                                      its videos.csv row, status included
     ├── videos.csv
     ├── frames.csv
     ├── detections.csv
@@ -365,16 +393,19 @@ PCI 48.6 · Poor · 3 detections: pothole 1, alligator crack 2
 
 ### 6.3 Atomic per-video writes and resume
 
-**Writing.**
+**Writing.** The part files are the source of truth; the top-level CSVs are built from them. On Windows, Excel locks a CSV while it is open, so appending to a file the user is looking at would otherwise fail the run.
 
 1. Buffer the rows for one video in memory. They are small.
-2. When the video finishes, append them to `frames.csv` and `detections.csv`.
-3. **Only then** append the video's row to `videos.csv`, with `status=done`.
+2. When the video finishes, write `parts/<video_id>/frames.csv` and `detections.csv`, each to a temporary name first and then renamed with `os.replace`.
+3. **Only then** write `parts/<video_id>/video.json`, with `status=done`, the same way.
+4. Append the video's rows to the top-level `frames.csv`, `detections.csv` and `videos.csv`. If a file is locked (`PermissionError`), skip it, mark it stale in `progress.json` and say so in the job panel; the run carries on.
+5. At the end of the run, rebuild every stale top-level file from the parts. If one is still locked, write `detections (1).csv` (and so on) beside it and warn. A **Rebuild CSVs** button and the `merge` CLI rebuild them on demand.
 
 **Resuming.**
 
-1. Rewrite `frames.csv` and `detections.csv`, keeping only rows whose `video_id` has `status=done`. This removes half-written rows from a crash.
-2. Skip the videos that are done.
+1. A video is done when `parts/<video_id>/video.json` says `done`. Skip it.
+2. Delete part folders that have no `video.json`: they are left over from a crash or a Stop.
+3. Rebuild the top-level CSVs from the parts.
 
 **`run.json`** is written at the start, with `"finished": null`, and updated at the end. It holds:
 
@@ -463,6 +494,7 @@ The column order is part of the contract. Define it once in `smartroad/export/cs
 | 38 | frame_pci | `48.6` | PCI of the frame the feature is in. |
 | 39 | frame_rating | `Poor` | |
 | 40 | image_file | `frames/2025_0315_105644_0012F/2025_0315_105644_0012F_00012_00011500ms.jpg` | Blank if the frame was not saved. |
+| 41 | map_url | `https://www.google.com/maps/search/?api=1&query=-12.0327250,13.9553260` | A link to the position, for finding a grading on a map. Blank when lat/lon are blank. The decimals always use `.`, in both CSV formats. |
 
 ### 7.3 `frames.csv`: one row per graded frame, including frames with no detections
 
@@ -479,19 +511,21 @@ Columns 1–21 are the same as in `detections.csv`. They are followed by:
   - `n_lane_shoulder_drop_off`
   - `n_marking_manhole`
 - `image_file`;
-- `stamp_text`. This column is always present, and empty unless *Include raw stamp text* is on.
+- `stamp_text`. This column is always present, and empty unless *Include raw stamp text* is on;
+- `map_url`, as in `detections.csv`.
 
 At startup, check that the model's `names[0..7]` match `CLASSES`, and warn if they don't.
 
 ### 7.4 `videos.csv`: one row per video
 
-`run_id, video_id, video_file, video_relpath, camera, source_profile, profile_source, camera_height_m, focal_35mm, horizon, hood_cutoff, status, error, warnings, duration_s, fps, width, height, recording_mode, speedup, capture_fps, mode_source, driving_duration_s, frames_graded, detections, mean_pci, min_pci, min_pci_time_s, start_utc, end_utc, start_local, utc_offset_start, utc_offset_end, time_source, clock_events, date_order, gps_source, gps_backend, gps_fixes, gps_coverage_pct, processing_s, frames_per_min`
+`run_id, video_id, video_file, video_relpath, camera, source_profile, profile_source, reencoded, camera_height_m, focal_35mm, horizon, hood_cutoff, status, error, warnings, duration_s, fps, width, height, recording_mode, speedup, capture_fps, mode_source, driving_duration_s, frames_graded, detections, mean_pci, min_pci, min_pci_time_s, start_utc, end_utc, start_local, utc_offset_start, utc_offset_end, time_source, clock_events, date_order, gps_source, gps_backend, gps_fixes, gps_coverage_pct, processing_s, frames_per_min`
 
 | Column | Values |
 |---|---|
 | `status` | `done`, `failed` or `skipped` |
 | `source_profile` | The profile key, `viofo` or `garmin` (§8.9) |
 | `profile_source` | `detected`, `declared` or `fallback`. A declared profile that detection contradicts, or a fallback, also writes a warning. |
+| `reencoded` | 1 if the file was treated as downloaded or re-encoded (§8.10), else 0 |
 | `camera_height_m`, `focal_35mm`, `horizon`, `hood_cutoff` | The camera geometry actually used to grade this video: the sidebar values or the profile preset |
 | `gps_backend` | `builtin`, `exiftool`, `gpx`, `ocr-tesseract`, `ocr-rapidocr`, or empty |
 | `gps_coverage_pct` | % of graded frames that have lat/lon |
@@ -509,11 +543,11 @@ At startup, check that the model's `names[0..7]` match `CLASSES`, and warn if th
 ### 7.5 Example (Standard format, illustrative values)
 
 ```
-run_id,video_id,video_file,video_relpath,camera,frame_index,frame_number,video_time_s,video_time_hms,elapsed_s,date_local,time_local,datetime_utc,utc_offset,time_source,lat,lon,gps_source,gps_quality,speed_kmh,heading_deg,feature_class,feature_label,astm_distress,astm_number,graded,confidence,bbox_x1,bbox_y1,bbox_x2,bbox_y2,image_w,image_h,on_seam,quantity,quantity_unit,severity_assumed,frame_pci,frame_rating,image_file
-20261106-193012_benguela,3f9a0c1d2b4e5f60,2025_0315_105644_0012F.MP4,2025_0315_105644_0012F.MP4,F,12,345,11.500,00:00:11.500,11.500,2025-03-15,10:56:55.500,2025-03-15T09:56:55.500Z,+01:00,embedded,-12.0327250,13.9553260,embedded,interpolated,84.0,0.0,pothole,Pothole,potholes,13,1,0.734,512,603,688,690,1280,800,0,1.000,count,medium,48.6,Poor,frames/2025_0315_105644_0012F/2025_0315_105644_0012F_00012_00011500ms.jpg
+run_id,video_id,video_file,video_relpath,camera,frame_index,frame_number,video_time_s,video_time_hms,elapsed_s,date_local,time_local,datetime_utc,utc_offset,time_source,lat,lon,gps_source,gps_quality,speed_kmh,heading_deg,feature_class,feature_label,astm_distress,astm_number,graded,confidence,bbox_x1,bbox_y1,bbox_x2,bbox_y2,image_w,image_h,on_seam,quantity,quantity_unit,severity_assumed,frame_pci,frame_rating,image_file,map_url
+20261106-193012_benguela,3f9a0c1d2b4e5f60,2025_0315_105644_0012F.MP4,2025_0315_105644_0012F.MP4,F,12,345,11.500,00:00:11.500,11.500,2025-03-15,10:56:55.500,2025-03-15T09:56:55.500Z,+01:00,embedded,-12.0327250,13.9553260,embedded,interpolated,84.0,0.0,pothole,Pothole,potholes,13,1,0.734,512,603,688,690,1280,800,0,1.000,count,medium,48.6,Poor,frames/2025_0315_105644_0012F/2025_0315_105644_0012F_00012_00011500ms.jpg,"https://www.google.com/maps/search/?api=1&query=-12.0327250,13.9553260"
 ```
 
-In Excel PT/EU format the same row uses `;` as the delimiter and decimal commas in numeric columns: `11,500`, `-12,0327250`, `48,6`. The example is a normal 30 fps video, so `frame_number` 345 sits at 11.5 s and `elapsed_s` equals `video_time_s`. String columns such as `00:00:11.500` and `10:56:55.500` don't change.
+In Excel PT/EU format the same row uses `;` as the delimiter and decimal commas in numeric columns: `11,500`, `-12,0327250`, `48,6`. The example is a normal 30 fps video, so `frame_number` 345 sits at 11.5 s and `elapsed_s` equals `video_time_s`. String columns such as `00:00:11.500` and `10:56:55.500` don't change. The `map_url` cell is quoted in Standard format because it contains a comma.
 
 ## 8. Location & time
 
@@ -627,11 +661,13 @@ Auto picks Tesseract if it is installed, and RapidOCR otherwise.
 - **Coordinates** in three formats, tried in this order:
   1. degrees-minutes-seconds, `hddd°mm'ss.s"`;
   2. Garmin's default, degrees and decimal minutes, `hddd°mm.mmm'`;
-  3. decimal degrees, with the hemisphere first (VIOFO, `S12.035136`) or last (`37.7749° N`).
+  3. decimal degrees, with the hemisphere first (VIOFO, `S12.035136`) or last (`37.7749° N`);
+  4. signed decimal degrees with no hemisphere letter (Garmin, `-26.36774 27.31358`), **only** when the video's profile sets `signed_dd` (§8.9). With the profile's `coord_decimals`, digits that run together (`-26.3677427.31358`) are split by the decimal count.
 
   The parser tolerates common OCR misreads of the symbols: `°` read as `o`, `º`, `*` or a space, and `'` read as `°`, `*` or `′`.
 
-  If the hemisphere letter or the degree sign was lost, the parser returns **no** coordinate. It never guesses the sign, or where degrees end and minutes begin.
+  If the hemisphere letter or the degree sign was lost, the parser returns **no** coordinate. It never guesses the sign, or where degrees end and minutes begin. The signed format is the exception: a lost minus sign can't be seen in one reading, so the sign vote under **Positions** catches it.
+- **Speed** is read last, from the text left after the date/time and the coordinates are taken out, so digits that run into the unit (`27.3135870KM/H`) can't be read as the speed. Values above 300 km/h are rejected.
 - **Dates** `YYYY-MM-DD`, `DD-MM-YYYY` and `MM-DD-YYYY`:
   - with `-`, `/` or `.` as the separator;
   - unpadded days and months allowed;
@@ -665,9 +701,13 @@ In timelapse there is no separate pre-pass. Each frame carries its own stamp, so
 4. **Segment clock.** For each segment, `base = median(offset) + 0.5 s`. The 0.5 s compensates for the stamp showing whole seconds.
    - The boundary between two segments is halfway between the last reading of one and the first reading of the next.
    - The first and last segments extend 10 s beyond their outermost readings.
-5. **Classify each step** `Δ = base_next − base_prev`:
+5. **Classify each step** `Δ = base_next − base_prev`, in this order:
+   - **Cut** (an edited video, §8.10): the stamp positions jump between the two segments by more than max(200 m, 50 m/s × the time between them). Each segment keeps its own clock: nothing is re-based, the zone carries over, and UTC jumps with the footage.
    - **Time zone change:** Δ is within 90 s of a non-zero multiple of 15 min. Both segments keep their own clock, and the zone offset changes by that multiple (§8.7).
-   - **Clock correction:** anything else. The later clock is trusted, because it is GPS-synced. The earlier segment is re-based onto it.
+   - **Clock correction:** anything else, when the positions show the vehicle didn't jump, or when there are no positions and the step comes within the first 120 s of driving (GPS syncs the clock soon after power-on). The later clock is trusted, because it is GPS-synced. The earlier segment is re-based onto it.
+   - **Cut**, otherwise: a late step with no positions to judge it.
+
+   Positions on each side are the median of the 3 nearest readings that have them, so one OCR error can't fake a cut. Steps more than 30 s apart in driving time are judged by the time rule alone.
 6. **Fit failure.** The fit fails when there is no segment, meaning fewer than 3 consistent readings. Frames outside every segment's span are *not covered*.
 
 **Per-frame stamp fallback.** This is on by default (§5.4). It applies to every frame when the fit fails, and to frames the fit doesn't cover. For each such frame:
@@ -683,9 +723,10 @@ Record `per-frame stamp for N frames` in `clock_events`. Accepted readings need 
 **Positions**
 
 1. Drop readings that have no coordinates.
-2. Drop any reading that is more than max(50 m, 2 s × speed) from the median of the two readings on each side of it (a Hampel filter).
-3. Build the stamp track **on driving time**, not on UTC: a fixed internal epoch plus `t_i`. Positions then don't depend on whether the clock fit succeeded.
-4. If the track can't place a frame (`gap` or `missing`) but the frame's own stamp has a coordinate, use it and mark the row `gps_quality=stamp-frame`. The check: the coordinate must be within max(50 m, 2 s × speed) of the nearest track reading, unless there is no track at all.
+2. **Sign vote** (signed format only): drop readings whose latitude or longitude sign disagrees with the majority of the video's readings, unless the value is within 0.5° of zero (a real crossing of the equator or the prime meridian). A run of readings with a lost minus sign would otherwise survive the next step.
+3. Drop any reading that is more than max(50 m, 2 s × speed) from the median of the two readings on each side of it (a Hampel filter).
+4. Build the stamp track **on driving time**, not on UTC: a fixed internal epoch plus `t_i`. Positions then don't depend on whether the clock fit succeeded.
+5. If the track can't place a frame (`gap` or `missing`) but the frame's own stamp has a coordinate, use it and mark the row `gps_quality=stamp-frame`. The check: the coordinate must be within max(50 m, 2 s × speed) of the nearest track reading, unless there is no track at all.
 
 **Accuracy.** Show this in the UI: the stamp updates once a second, so timing is ±1 s, about ±25 m at 90 km/h. Prefer Embedded GPS when the file has it.
 
@@ -696,6 +737,10 @@ Record `per-frame stamp for N frames` in `clock_events`. Accepted readings need 
 - **Low resolution.** At 960×600, Tesseract misread the year as `7075`. The year check rejects it.
 - **Garmin-style stamps.** Lines such as `N47°36.123' W122°19.456' 35 MPH 10/25/2025 04:23:15 PM` parse correctly with both engines once `° ' "` are whitelisted. Without those symbols, Tesseract dropped the degree signs and the coordinates couldn't be read.
 - These stamps were drawn in DejaVu Sans Mono, not a real Garmin font, so Phase 0 must confirm the result on real Garmin footage.
+- **Real stamps (1.4).** On the two screenshots supplied on 2026-11-07, Tesseract 5.3.4 and RapidOCR 1.2.3 read both stamps exactly (DASHCAM_NOTES.md):
+  - the Garmin stamp (1920×1080, white text without a band) at 1920×1080, 1280×720, 854×480 and 640×360;
+  - the VIOFO stamp (screenshot at 2000×1250) at 2000×1250 and 1280×800. At 960×600, Tesseract read the year as 2075, which the year check rejects; RapidOCR still read it exactly;
+  - 44–363 ms per crop. The slowest call was RapidOCR's first, which loads its model.
 
 ### 8.5 Clock: where the date and time come from
 
@@ -721,6 +766,7 @@ Record `per-frame stamp for N frames` in `clock_events`. Accepted readings need 
 - The fine time offset is added last.
 - If no clock can be found, the date and time columns are left blank and `time_source` is `none`. The `video_time_*` columns are always filled.
 - When two clocks are available, compare them. If they differ by more than 5 s, add a warning, because the UTC offset is usually wrong.
+- For a downloaded or re-encoded file (§8.10), skip the file-name and container clocks and the embedded GPS: they describe the download, not the drive. The stamp is the only clock.
 
 ### 8.6 Interpolation and quality
 
@@ -758,6 +804,7 @@ Record `per-frame stamp for N frames` in `clock_events`. Accepted readings need 
 7. **Ambiguity.** A clock correction of exactly one hour looks like a zone change.
    - With a real GPS clock (4.1), the offset is measured, so there is no ambiguity.
    - Without one, treat the step as a zone change and flag it in `clock_events` as "zone change or 1-hour clock error".
+8. **Cuts in edited videos** (§8.10). At a cut, UTC jumps with the footage, which is correct: the clips were recorded at different times. Nothing is re-based across a cut, and a cut that happens to be a whole number of 15 minutes is still a cut when the position jumps. `clock_events` records `cut at t=… s: clock +… s, moved … m`.
 
 **Why this design**
 
@@ -794,7 +841,7 @@ The spec handles this with one number per video, the **speed-up** (driving secon
 
 **Detecting the mode (Auto).** The first piece of evidence available wins:
 
-1. **Stamp.** Read 3 frames, at video times 0.5, 1.5 and 2.5 s (spread across the file if it is shorter). Take the slope of stamp time against video time (Theil–Sen, A.8). About 1 means normal; otherwise the slope is the speed-up.
+1. **Stamp.** Read 3 clusters of 3 frames, each frame 1 video-second apart, starting at 10 %, 50 % and 90 % of the file. Take the slope of stamp time against video time inside each cluster (Theil–Sen, A.8) and the median across clusters, so a title card without a stamp, or a cut in an edited video, can't bias it. If the cluster slopes disagree by more than 5 %, warn. A file shorter than 30 s of video is read as one cluster of 9 frames spread across it. About 1 means normal; otherwise the slope is the speed-up.
 2. **Embedded GPS.** The slope `s` from §8.2.
 3. **File names in a batch.** For files recorded back to back in the same session, (start of the next file − start of this file) ÷ this file's duration ≈ speed-up. Use this only when there is no other evidence.
 4. **No evidence.** Assume normal video, set `mode_source=assumed`, and warn.
@@ -806,7 +853,7 @@ The mode is decided **per video**, so one folder can mix files recorded while dr
 **The user setting (Recording mode, §5.2).** Decision: it is an override, not a replacement for detection.
 
 - **What it does.** Choosing `Normal` or `Timelapse` with a rate skips detection. It is the only way to get correct times for a file that has neither a stamp nor GPS.
-- **Check a declared mode anyway.** The check reuses readings the pipeline takes anyway: 3 stamp reads, or the GPS slope.
+- **Check a declared mode anyway.** The check reuses readings the pipeline takes anyway: the 9 stamp reads, or the GPS slope.
   - If the evidence contradicts the declared speed-up by more than 5 %, keep the declaration, because it is the user's choice.
   - Write a warning to `videos.csv` and show it in the Check panel.
   - A wrong speed-up makes every time, position and speed in the CSV wrong by the same factor, and the result still looks plausible. This check is what catches it.
@@ -836,6 +883,7 @@ class CameraPreset:
     height_m: float = 1.70
     focal_35: float = 25.0
     horizon: float = 0.139
+    sky_cutoff: float = 0.45            # the detector's top cut-off (the sidebar's Sky cut-off)
     hood_cutoff: float = 1.0
     calibrated: bool = False            # True only after a lens and mount calibration for this make
 
@@ -860,6 +908,9 @@ class SourceProfile:
     embedded_gps: str | None                        # key into GPS_READERS: "novatek", "exiftool", or None
     gpsdatetime_is_clock: bool                      # False when GPSDateTime is CreateDate + SampleTime (§8.2)
     stamp_roi: tuple[float, float, float, float] | None   # fractions of the frame; None = no stamp expected
+    stamp_tokens: tuple[str, ...]                   # text that identifies the make on its stamp, e.g. ("GARMIN",)
+    signed_dd: bool                                 # stamp shows signed decimal degrees with no hemisphere (A.1)
+    coord_decimals: int | None                      # the stamp's fixed number of coordinate decimals, if any
     date_order: str                                 # "Auto", "DMY" or "MDY"
     capture_rates: tuple[int, ...]                  # timelapse capture rates to snap to (§8.8)
     camera: CameraPreset
@@ -869,7 +920,8 @@ class SourceProfile:
 class ProfileMatch:
     profile: SourceProfile
     source: str                         # "detected" | "declared" | "fallback"
-    evidence: str
+    evidence: str                       # e.g. "gps box in moov", "file name", "stamp: GARMIN"
+    reencoded: bool                     # recognised from the stamp alone: downloaded or re-encoded (§8.10)
     warnings: tuple[str, ...]
 
 
@@ -877,7 +929,9 @@ PROFILES: dict[str, SourceProfile] = {}             # the registry, in registrat
 
 def register(profile: SourceProfile) -> SourceProfile: ...
 def probe_container(path: Path) -> ContainerProbe: ...      # in-process struct parsing, like video_start_time()
-def resolve_profile(path: Path, *, declared: str = "auto", fallback: str = "viofo") -> ProfileMatch: ...
+def resolve_profile(path: Path, *, declared: str = "auto", fallback: str = "viofo",
+                    read_stamp: Callable[[tuple[float, float, float, float]], str | None] | None = None
+                    ) -> ProfileMatch: ...      # read_stamp: OCR one frame at 50 % of the file in a region
 ```
 
 `GPS_READERS` in `geo.py` maps a reader key to a function `(path, info, timebase) -> fixes`. `novatek` is the built-in decoder with ExifTool as its fallback (§8.2). `exiftool` is the ExifTool backend alone. The *Embedded GPS* backend setting (§5.4) overrides the profile's reader.
@@ -887,23 +941,29 @@ def resolve_profile(path: Path, *, declared: str = "auto", fallback: str = "viof
 | Field | VIOFO | Garmin |
 |---|---|---|
 | `detect` evidence | A Novatek `gps ` box among `moov`'s children, or a file name matching `VIOFO_NAME` (A.5) | A `GRMN\d{4}` file name, or a Garmin make string in the container. Phase 0 records which atoms real Garmin files carry. |
+| `stamp_tokens` | `("VIOFO",)` (the model name on the stamp, `VIOFO A129 Plus`) | `("GARMIN",)` (the stamp starts with `GARMIN`) |
 | `filename_patterns` | `VIOFO_NAME` | None. `GRMN0007.MP4` carries no time. |
 | `camera_letters` | Yes | No |
 | `container_clock_local` | True. Phase 0 confirms it. | True until Phase 0 measures it. When a second clock exists, the 5 s comparison in §8.5 warns if this is wrong. |
 | `embedded_gps` | `novatek` | `exiftool` (timed metadata track, placed by `SampleTime`) |
 | `gpsdatetime_is_clock` | True (receiver UTC) | False (§8.2) |
-| `stamp_roi` | `(0.0, 0.955, 1.0, 1.0)` | Provisional `(0.0, 0.93, 1.0, 1.0)`. Phase 0 sets it from a real clip; the layout differs between Garmin models. |
-| `date_order` | `Auto` (DMY on the sample frame) | `Auto` |
+| `stamp_roi` | `(0.0, 0.955, 1.0, 1.0)`. Measured: text at y 0.972–0.985, x 0.28–0.99. | `(0.0, 0.95, 0.62, 1.0)`. Measured: white text without a band at y 0.965–0.985, x 0.01–0.58, 23 px tall at 1080p. Other Garmin models may differ; the stamp region can be changed in the sidebar. |
+| `signed_dd`, `coord_decimals` | False, None | True, 5 (`-26.36774 27.31358`) |
+| Stamp layout (for reference) | `84 KM/H S12.035136 E13.955326 <custom text> VIOFO A129 Plus <plate> 15-03-2025 10:56:44` | `GARMIN 01/11/2020 07:17:05 -26.36774 27.31358 70 KM/H` |
+| `date_order` | `Auto` (DMY on the sample frame) | `Auto`. The sample, `01/11/2020`, is ambiguous: 1 November or 11 January. |
 | `capture_rates` | `(1, 2, 3, 5, 10)` | `(1, 2, 3, 5, 10, 15)` until Phase 0 measures Travelapse |
-| `camera` | The sidebar defaults with `hood_cutoff` 0.80, `calibrated=False` | The sidebar defaults, `calibrated=False` |
+| `camera` | Height 1.70, focal 25 (the sidebar defaults, not measured); horizon 0.61, sky cut-off 0.58, hood cut-off 0.80, measured on the screenshot (road vanishes at y ≈ 0.61, bonnet from y ≈ 0.82); `calibrated=False` | Height 1.70, focal 25 (not measured); horizon 0.50, sky cut-off 0.47, hood cut-off 0.62, measured on the screenshot (road vanishes at y ≈ 0.50, bonnet from y ≈ 0.63, dashboard from y ≈ 0.72); `calibrated=False` |
 
 **Rules**
 
-- **Auto.** Call each registered profile's `detect` in registration order; the first match wins, and its evidence goes into the Check panel. If none matches, use the *If not recognised* profile, set `profile_source=fallback` and warn: `not recognised as VIOFO or Garmin; using VIOFO defaults`.
+- **Auto.** Call each registered profile's `detect` in registration order; the first match wins, and its evidence goes into the Check panel.
+  - If no container evidence matches and an OCR engine is installed, read the stamp of one frame at 50 % of the file in each registered profile's `stamp_roi`. Normalise the text (upper case, spaces removed, `1`→`I`, `0`→`O`; RapidOCR reads `VIOFO` as `V1OFO`) and look for each profile's `stamp_tokens`. A match is `profile_source=detected` with evidence `stamp: GARMIN`, and sets `reencoded` (§8.10).
+  - If neither matches, use the *If not recognised* profile, set `profile_source=fallback` and warn: `not recognised as VIOFO or Garmin; using VIOFO defaults`.
 - **Declared.** Choosing a profile skips the choice, but detection still runs. If another profile matches, keep the declaration and warn, as for a declared Recording mode (§8.8).
 - **What a profile changes.** Only defaults. Every setting the profile feeds has a `From profile` value (*Container clock is local time*, *Embedded GPS* backend, stamp region; date order `Auto` starts from it). Any explicit value overrides the profile for every video.
 - **Camera geometry.** With *Camera geometry for export* = `Sidebar values` (the default), grading is exactly as before. With `From profile (per video)`, each video is graded with its profile's `CameraPreset`. Either way, the values used go into `videos.csv`. While `calibrated` is False, the run summary says `PCI indicative: <profile> geometry not calibrated` (§13).
 - **Unchanged.** Photograph mode and the video preview don't use profiles, except that the preview's Check panel shows the detected profile.
+- **Camera presets.** Horizon and cut-offs were measured on one screenshot per make; height and focal length are the sidebar defaults, not measurements. §13 describes a geometry overlay that would let the user check them.
 - **Batches.** The profile is resolved per video, so one folder can mix VIOFO and Garmin files. The time-zone carry-over (§8.7) and the date-order carry-over (§8.4) apply only between videos with the same profile.
 
 **Adding a make later**
@@ -913,6 +973,28 @@ def resolve_profile(path: Path, *, declared: str = "auto", fallback: str = "viof
 3. Add its file names to the A.5 table and a probe fixture to `test_profiles.py`.
 
 The sidebar lists `PROFILES`, so it needs no change, and the CSV schema doesn't change.
+
+### 8.10 Downloaded and edited footage
+
+The Garmin footage for this work comes from YouTube. A download or any re-encode keeps the picture, and so the burned-in stamp, but not the camera's file:
+
+| Lost | Consequence |
+|---|---|
+| The camera's file name (`GRMN0007.MP4`, `2025_0315_105644_0012F.MP4`) | No file-name clock, no front/rear letter, no profile evidence from the name |
+| The container clock (mvhd) | It is the re-encode time, not the recording time |
+| Embedded GPS (Novatek `gps ` box, Garmin metadata track) | No embedded positions or GPS clock |
+| Often the original resolution and bit rate | Fine cracks are lost; see below |
+
+**Rules**
+
+- **Recognising it.** *Downloaded / re-encoded video* (§5.4) is `Auto` by default: a file whose profile was recognised from the stamp alone (§8.9) is treated as re-encoded. `Yes` forces it, for example for a VIOFO clip trimmed in an editor; `No` turns it off.
+- **Time and position from the stamp alone.** The Auto chains skip the file-name and container clocks and the embedded GPS (§8.5). GPS source `Auto` resolves to the stamp.
+- **Date order.** The container date is not used as a reference (§8.4, Date order step 2). An ambiguous date such as `01/11/2020` with no day above 12 in the video falls to the previous video of the same profile, then to DMY, with a warning.
+- **UTC offset.** It can't be measured without a GPS clock, so it comes from the setting (§8.7, 4.3), with a warning naming the offset used. Set it for the place the video was recorded: the Garmin sample is in South Africa, UTC+2.
+- **Cuts.** An uploader may join clips. The clock fit treats a step with a position jump as a cut, not a clock correction (§8.4 step 5, A.7). Title cards and overlays without a stamp give rows with blank time and position (`time_source=none`, `gps_quality=missing`), and their detections are still written.
+- **Re-timed uploads.** An upload played faster than real time is detected like a timelapse (§8.8): ×2 playback is `timelapse ×2`. A speed-up that matches no capture rate is kept as measured, with a warning.
+- **Detection quality.** YouTube's compression removes fine cracks, so downloaded footage finds fewer distresses than the camera's own file and its PCI reads high. Use downloaded footage to test the pipeline (stamp, clock, positions, CSVs), not to grade roads. Download the highest resolution offered: the Garmin stamp still read correctly at 640×360, but detection needs the detail.
+- **Copyright and privacy.** Don't commit downloaded footage or frames from it to this public repository. Tests use synthetic clips and stamp text.
 
 ## 9. Architecture
 
@@ -939,7 +1021,8 @@ New package `smartroad/export/`:
 | `inference.py` | `make_detector(model, *, conf, tiled, overlap, top, bottom, device)` and `make_grader(*, height_m, focal_35, horizon, near_m, far_m, severity, top, bottom, class_names)`. This logic moves out of `app.py`'s `_detect` and `grade` **with no change in behaviour**, and `app.py` calls these instead. |
 | `annotate.py` | `COLOURS`, `PRETTY` and `draw()`, moved out of `app.py` (which imports them back), plus `add_footer()` |
 | `frames_out.py` | File naming, the which-frames filter, JPEG and EXIF writing |
-| `csv_out.py` | Column tuples, formats, row builders, and `RunFolder` (create, append one video, purge incomplete videos, list done ids) |
+| `csv_out.py` | Column tuples, formats, row builders, and `RunFolder` (create, write one video's part files, append to the top-level CSVs or mark them stale, rebuild from parts, purge incomplete parts, list done ids; §6.3) |
+| `jobs.py` | `JobRegistry` (one per server process, held in `st.cache_resource`), `Job` (thread, frozen settings, state, `should_stop`), `progress.json` reading and writing. **Must not import streamlit**; the GUI polls it (§5.7). |
 | `pipeline.py` | `process_video()` and `process_batch()`. **Must not import streamlit, torch or ultralytics.** |
 | `__main__.py` | The CLI (S1) |
 
@@ -1022,7 +1105,8 @@ The defaults must equal the GUI defaults, and a test checks this.
 
 ```
 info  = probe_video(video)
-tb    = declared_timebase or detect_timebase(video, info, ocr=engine)     # §8.8: 3 stamp reads or GPS slope
+prof  = resolve_profile(video, declared=..., fallback=..., read_stamp=...)  # §8.9: container, then stamp tokens
+tb    = declared_timebase or detect_timebase(video, info, ocr=engine)     # §8.8: 9 stamp reads in 3 clusters, or GPS slope
 geo   = geo or build_geo_context(video, info, tb, settings.geo, gpx=gpx, ocr=engine)
 sel   = sample_frames(info.n_frames, tb, per_driving_s=fps, max_frames=limit or None)
 for i, (n, img, stamp, orig) in enumerate(iter_samples(video, [k for k, _, _ in sel], long_side=1280,
@@ -1056,7 +1140,7 @@ python -m smartroad.export merge Output --out Output\_merged                   #
 
 ### Phase 0: probe real footage
 
-No changes in `smartroad/`. Using one A129 Plus clip that I'll provide, and one Garmin clip if there is one (§12, question 7), write `DATA/docs/DASHCAM_NOTES.md` containing, per clip:
+No changes in `smartroad/`. `DATA/docs/DASHCAM_NOTES.md` already holds what the two screenshots show (1.4). Using one A129 Plus clip that I'll provide, and one Garmin clip downloaded from YouTube (§12, question 7), add per clip:
 
 1. The output of `exiftool -ee3 -api debug=1 -G3 -a -s -GPSType -GPSDateTime -GPSLatitude -GPSLongitude -GPSSpeed CLIP.MP4`. `GPSType` names the decoder variant ExifTool used.
 2. The output of `exiftool -a -G1 -s -time:all CLIP.MP4`, for the container clock.
@@ -1096,13 +1180,15 @@ Write the sampler against `TimeBase` (A.8) from the start, with speed-up 1. Phas
 
 Covers M3.
 
-- Add `csv_out.py` and `RunFolder`.
+- Add `csv_out.py` and `RunFolder`, with per-video part files (§6.3).
+- Add `jobs.py` and the background job panel (§5.7). Run export becomes a background job.
 - Write `frames.csv`, `detections.csv`, `videos.csv` and `run.json`. In this phase the location columns stay blank, and the time comes from the file name or the container clock.
 
 **Done when:**
 
-- the format, schema and atomic-write tests pass;
-- the files open correctly in Excel (Portuguese locale) and in pandas.
+- the format, schema, atomic-write and job tests pass;
+- the files open correctly in Excel (Portuguese locale) and in pandas;
+- a running export survives slider changes and a page reload, and keeps running while `detections.csv` is open in Excel.
 
 ### Phase 3: location and time
 
@@ -1111,12 +1197,13 @@ Covers M4, M5, M6 and M11 (timelapse), plus S3 (EXIF) and S5 (`tracks/*.gpx`).
 - Add `novatek.py`, `exiftool_gps.py`, `stamp.py`, `ocr.py`, `clock.py` and `geo.py`.
 - Wire the rest of each profile in: file-name patterns, container-clock rule, GPS reader, `gpsdatetime_is_clock`, stamp region, date order and capture rates. Add the *Source profile* and *If not recognised* widgets.
 - Add the `frames.py` additions from §9.1.
+- Add downloaded and edited footage handling (§8.10): stamp-token recognition, the *Downloaded / re-encoded video* setting, cuts, cluster-based timelapse detection, the signed coordinate format and the sign vote.
 - Add the sidebar section from §5.4 and the Check location & time button.
 
 **Done when:**
 
 - the §11 tests pass;
-- checks 2 and 3 in §11.3 work on my clip.
+- checks 2 and 3 in §11.3 work on my clip, and check 8 on the downloaded Garmin clip.
 
 ### Phase 4: batch, resume, CLI, merge
 
@@ -1136,16 +1223,17 @@ These must pass in CI's light environment, or skip with a reason.
 
 | File | What it checks |
 |---|---|
-| `test_stamp.py` | **Parsing:** every row of both tables in A.1 gives the expected values, including `date_ambiguous` and the coordinate format: VIOFO decimal degrees, Garmin DDM and DMS, MDY, 12-hour clocks, and the OCR variants. **Refusals:** a lost hemisphere or degree sign gives no coordinate; 62 minutes is rejected; `13:23:15 PM` is rejected; `10:56:44 A129` has no date. **`resolve_date_order`:** a day above 12 decides; a file-name date decides an ambiguous date; otherwise the previous video's order; otherwise DMY with a warning. |
-| `test_clock.py` | The file-name cases in A.5. Local↔UTC at +1.0 and −3.5. Every scenario in A.7: clean, outliers, +1 h and −1 h zone steps, a +45 min step, a 37 s clock correction, a correction followed by a zone step, a failed fit, and the per-frame fallback. `start_zone()`: measured, then carried over (within 12 h), then the setting. Every row of the Auto table in §8.5, as a parametrised test. |
+| `test_stamp.py` | **Parsing:** every row of the three tables in A.1 gives the expected values, Tables 1 and 2 with `signed_dd` both off and on, including `date_ambiguous` and the coordinate format: VIOFO decimal degrees, Garmin DDM and DMS, MDY, 12-hour clocks, and the OCR variants. **Refusals:** a lost hemisphere or degree sign gives no coordinate; 62 minutes is rejected; `13:23:15 PM` is rejected; `10:56:44 A129` has no date. **`resolve_date_order`:** a day above 12 decides; a file-name date decides an ambiguous date; otherwise the previous video's order; otherwise DMY with a warning. **Sign vote:** a minority of readings with a lost minus sign is dropped; a real equator crossing (values within 0.5° of zero) is kept. |
+| `test_clock.py` | The file-name cases in A.5. Local↔UTC at +1.0 and −3.5. Every scenario in A.7: clean, outliers, +1 h and −1 h zone steps, a +45 min step, a 37 s clock correction, a correction followed by a zone step, a failed fit, and the per-frame fallback. The cut scenarios in A.7: a cut with a position jump, a +1 h cut with a position jump, a late step without positions, a late correction with continuous positions, a zone change followed by a cut. `start_zone()`: measured, then carried over (within 12 h), then the setting. Every row of the Auto table in §8.5, as a parametrised test. |
 | `test_novatek.py` | **Input:** synthetic MP4 bytes built in the test, like `_mp4()` in `test_frames.py`, with a `gps ` table placed before `trak` and after it, 1 void block and 6 valid GPSType 3 blocks (A.3). **Checks:** decoded values within 1e-6°; the block indices keep the void block; `video_start_utc` is the first fix minus 1 s; a corrupted layout gives `layout_ok=False`. |
 | `test_exiftool_gps.py` | The JSON fixture (A.4) gives the expected fixes. Alignment with n=7 and m=6 puts fix 1 at block 1. A Garmin-like fixture, with `SampleTime` and `GPSDateTime = CreateDate + SampleTime`, places fixes by `SampleTime` and is **not** used as a clock. Only if `find_exiftool()` finds ExifTool: run it on the synthetic file and require the same fixes as the built-in decoder. |
 | `test_gpx_ext.py` | GPX 1.0, a file with no namespace, and two files merged and sorted. `test_frames.py` is untouched and still passes. |
-| `test_csv_out.py` | **Layout:** exact column tuples; exact bytes for both formats (BOM, `;`, decimal comma, CRLF). **Values:** `None` gives an empty cell, booleans are 1 or 0, paths are relative with forward slashes. **Rows:** one per detection; frames without detections are present. **Resume:** removes partial rows. |
+| `test_csv_out.py` | **Layout:** exact column tuples; exact bytes for both formats (BOM, `;`, decimal comma, CRLF). **Values:** `None` gives an empty cell, booleans are 1 or 0, paths are relative with forward slashes. **Rows:** one per detection; frames without detections are present; `map_url` is blank without a position and uses `.` decimals in both formats. **Parts and resume:** part folders without `video.json` are removed; a locked top-level file (simulated `PermissionError`) is marked stale and rebuilt from the parts at the end, or written as `detections (1).csv` when still locked. |
 | `test_frames_out.py` | File names. Which-frames filters. The footer adds height and leaves the original pixels byte-for-byte identical. The EXIF round trip (A.6). Box scaling at original resolution. |
 | `test_geo.py` | `GeoContext` over a known `Track`: interpolation, `gap` (blank), `clamped`, `missing`, and derived speed and heading. |
-| `test_timebase.py` | Every check in A.8. **Detection:** ×30 and ×15 from the stamp; ×1 for normal video; ×30 from VIOFO GPS block times (1 block per video second, fixes 30 s apart); no evidence gives normal with a note. **Declared mode:** contradicted by the evidence, it is kept and warned; confirmed, no warning. **Snapping:** 29.97 fps. **Sampling:** every frame; every 2nd frame; a rate above the capture rate is capped; normal 30 fps gives frames 15, 45, 75, the same as `frame_times()`. **Long clip:** a 1-hour timelapse clip's `elapsed_s` reaches 3600 while its `video_time_s` reaches 120. |
-| `test_profiles.py` | **Registry:** both profiles registered, keys unique, the sidebar options equal the registry. **Detection:** a synthetic MP4 with a `gps ` box is VIOFO; `2025_0315_105644_0012F.MP4` is VIOFO by name; `GRMN0007.MP4` is Garmin; an unknown file falls back with a warning. **Declared:** a declared Garmin profile on a file with a `gps ` box is kept and warned. **Overrides:** an explicit setting beats the profile; `From profile` takes the profile's value. **Extension:** registering a test profile makes it detectable with no other change. |
+| `test_timebase.py` | Every check in A.8. **Detection:** ×30 and ×15 from the stamp; ×1 for normal video; ×30 from VIOFO GPS block times (1 block per video second, fixes 30 s apart); no evidence gives normal with a note. **Declared mode:** contradicted by the evidence, it is kept and warned; confirmed, no warning. **Snapping:** 29.97 fps. **Sampling:** every frame; every 2nd frame; a rate above the capture rate is capped; normal 30 fps gives frames 15, 45, 75, the same as `frame_times()`. **Long clip:** a 1-hour timelapse clip's `elapsed_s` reaches 3600 while its `video_time_s` reaches 120. **Clusters:** a title card without a stamp, a cut between clusters and a cut inside one cluster (A.8). |
+| `test_profiles.py` | **Registry:** both profiles registered, keys unique, the sidebar options equal the registry. **Detection:** a synthetic MP4 with a `gps ` box is VIOFO; `2025_0315_105644_0012F.MP4` is VIOFO by name; `GRMN0007.MP4` is Garmin; an unknown file falls back with a warning. **Declared:** a declared Garmin profile on a file with a `gps ` box is kept and warned. **Overrides:** an explicit setting beats the profile; `From profile` takes the profile's value. **Extension:** registering a test profile makes it detectable with no other change. **Stamp tokens:** with a fake `read_stamp` returning the Garmin sample text, a file with no container evidence is Garmin, `reencoded=True`; `V1OFO` text is VIOFO; no token falls back. |
+| `test_jobs.py` | A job runs a fake pipeline on a thread and writes `progress.json`; Stop ends it after the current frame and no part files are written for the unfinished video; a second submit to the same output folder is refused; the registry's state is unchanged by a simulated rerun. |
 | `test_settings.py` | `ExportSettings()` defaults equal the `app.py` sidebar defaults. The JSON round trip. |
 | `test_tiled.py` (extend) | `road_roi(..., bottom_fraction=1.0)` gives the same result as before. A box whose centre is below the cut is dropped. |
 
@@ -1172,7 +1260,7 @@ Expected:
 
 **`test_pipeline_resume.py`.** Two clips. Stop after the first with `should_stop`, then resume. Expected: no duplicate `(video_id, frame_index)`, and both videos are `done`.
 
-**`test_pipeline_clock.py`.** Same synthetic stamp clip as `test_pipeline_stamp.py`, 12 s long, in three variants:
+**`test_pipeline_clock.py`.** Same synthetic stamp clip as `test_pipeline_stamp.py`, 12 s long, in four variants:
 
 - **Zone change.** The stamp jumps +1 h at t = 6 s.
   - Expected: `datetime_utc` advances by about 1 s between the frames at 5.5 s and 6.5 s, while `time_local` jumps by about 1 h 0 m 1 s.
@@ -1183,6 +1271,8 @@ Expected:
   - `clock_events` says `clock corrected +37.0 s`.
 - **Fit failure.** Name the clip `2025_0315_105644_0001F.MP4`. Only the frames at t = 1.5 and 2.5 s have a readable stamp, and the rest are blanked. The pre-pass then has 2 readings, which is too few to fit a clock, but they agree with each other.
   - Expected: those two frames get `time_source=overlay-frame`, and the other frames fall back to the file-name clock (`time_source=filename`).
+- **Cut.** At t = 6 s the stamp jumps +2 h 13 min 7 s and 35 km east, as in an edited video.
+  - Expected: `clock_events` names a cut. The rows before 6 s keep their own clock (nothing is re-based), `datetime_utc` jumps by about 2 h 13 min between the frames at 5.5 s and 6.5 s, and `utc_offset` stays `+01:00`.
 
 **`test_pipeline_timelapse.py`.** Skips without OpenCV or an OCR engine.
 
@@ -1201,7 +1291,7 @@ Expected, in Auto mode:
 - The clock fit gives one segment.
 - With Recording mode set to `Normal video`, the same clip still runs, and `videos.csv` carries the contradiction warning.
 
-This scenario was run end to end (A.8): detection ×30 from 3 stamp reads, 10/10 frames exact with both sequential and seek decoding, 30 graded frames OCR'd in 3.9 s, one clock segment, and per-frame latitudes exact.
+This scenario was run end to end with the 1.2 code (A.8): detection ×30 from 3 stamp reads, 10/10 frames exact with both sequential and seek decoding, 30 graded frames OCR'd in 3.9 s, one clock segment, and per-frame latitudes exact.
 
 **`test_tesseract_argv.py`** (skips without Tesseract).
 
@@ -1212,7 +1302,7 @@ This scenario was run end to end (A.8): detection ×30 from 3 stamp reads, 10/10
 
 ### 11.3 Manual acceptance (on my footage)
 
-1. **No regressions.** With GPS source None and export off, the app looks and behaves exactly as before, for photos and for the video preview.
+1. **No regressions.** With export off and before *Check location & time* runs, the app looks and behaves exactly as before, for photos and for the video preview.
 2. **Embedded GPS.** *Check location & time* on one clip shows a track along the road actually driven, and its start time matches the stamp within 1 s.
 3. **Stamp OCR.** On the same clip, the reading at the time of the sample frame is S12.035136 E13.955326, 15-03-2025 10:56:44. Embedded and stamp positions agree after any lag correction: median distance under 15 m, maximum under 40 m.
 4. **Frame files.** A 1 fps export with "All graded frames" produces as many JPEGs as `frames.csv` has rows, and every `image_file` in `detections.csv` exists.
@@ -1221,6 +1311,9 @@ This scenario was run end to end (A.8): detection ×30 from 3 stamp reads, 10/10
    - The Standard file loads in QGIS as a point layer (X = lon, Y = lat, EPSG:4326).
 6. **Resume.** A batch of 10 or more clips can be stopped midway and resumed without duplicate rows. Every video ends as `done`, or as `failed` with a reason.
 7. **Merge.** Merging two runs keeps the latest run for each `video_id`.
+8. **Downloaded Garmin clip.** With every setting on Auto: `source_profile=garmin`, `profile_source=detected`, `reencoded=1`; positions and times come from the stamp; a frame's `time_local`, lat and lon match the stamp visible in its saved image.
+9. **Background export.** While an export runs, change a slider and reload the page: the job keeps running, the panel finds it again, and **Stop** ends it with the finished videos kept.
+10. **Finding a grading.** Pick the worst frame in `frames.csv`; its `map_url` opens the place, and its `video_time_hms` shows the same frame in a video player.
 
 ## 12. Open questions
 
@@ -1229,16 +1322,17 @@ The default is used until each question is answered.
 1. **Camera time zone setting.** Default: +1.0 h. Phase 0 confirms it.
 2. **Date format on the stamp.** Default: DD-MM-YYYY, as on the sample frame.
 3. **Rear-camera files (`…R.MP4`).** Default: skipped, front camera only.
-4. **Meaning of frames per second.** Default: one selector sets both the grading rate and the saving rate. If grading and saving should use different rates, say so.
+4. **Meaning of frames per second.** Answered 2026-11-07: keep sampling per second of driving as the default, one selector for grading and saving. Use the GPS source to tie each graded frame's video time to its position and clock time. Distance-based sampling is not planned.
 5. **Stamp test image.** `tests/data/stamp_a129plus_masked.png` is supplied with this spec. It is the 2560×72 stamp strip from the sample frame, with the plate and custom text painted out. It still shows a position and a date. Should it be committed to this public repo? Default: no, and the test that uses it is skipped.
 6. **Machine.** Default: Windows, with an NVIDIA GPU optional. This decides the ExifTool and Tesseract paths and whether the macOS rules apply.
-7. **Garmin footage.** Is there a real Garmin clip for Phase 0? The Garmin support is built from Garmin's documented position formats and from ExifTool's Garmin decoder, and tested on rendered stamps only. Default: no real clip, and the Garmin paths stay covered by unit tests until one is available.
+7. **Garmin footage.** Answered 2026-11-07: the Garmin footage is downloaded from YouTube, so only the stamp survives (§8.10). A screenshot of it set the Garmin profile (§8.9). The ExifTool Garmin path stays covered by unit tests until an original Garmin file is available.
 8. **Local time columns.** Default: *Camera's clock*. Switch to *Fixed UTC offset* if reports must always be in one zone (§8.7).
 9. **Timelapse source.** Which camera records the timelapse, and at what capture rate? Default: an A129 Plus timelapse at 1 fps, played back at 30 fps, with the stamp on. Phase 0 should include one timelapse clip and record three things:
    - the GPS block count against the frame count (expect one block per *video* second);
    - whether the stamp changes on every frame;
    - whether the file names differ from those of normal recordings.
-10. **Garmin model.** Which Garmin model? Stamp layout, Travelapse behaviour and container metadata differ between models. Default: the provisional Garmin profile in §8.9, corrected in Phase 0 when a clip is available.
+10. **Garmin model.** Answered 2026-11-07: unknown (YouTube footage). The Garmin profile follows the screenshot's stamp. Another layout is added to the profile when footage with it turns up.
+11. **Background exports.** Answered 2026-11-07: yes, exports run in the background (§5.7).
 
 ## 13. Known limitations
 
@@ -1250,6 +1344,10 @@ Record these in the README. Don't fix them now.
   - Feature type, time and location are unaffected. `quantity`, `frame_pci` and `pci` from dashcam footage are only indicative until the lens is calibrated.
   - `run.json` stores the camera geometry, so results can be recalculated later.
 - **One frame is not an ASTM sample unit**, as the README already says. The CSVs are a georeferenced inventory, not a certified section PCI.
+- **Camera presets are first estimates.** Horizon and cut-offs were measured on one screenshot per make; height and focal length are not measured. The default focal length, 25 mm, suits a narrow lens; a 140° dashcam lens is far wider. A geometry overlay on the preview (lines at 3, 5, 10 and 15 m, and the width of a 3.5 m lane at each) would let the user tune height and focal length by eye; it is not in this spec.
+- **Downloaded footage** (§8.10): detection finds fewer fine cracks, so PCI reads high; the UTC offset comes from the setting; the date order of ambiguous dates may be a guess.
+- **Cuts without positions.** On a stamp without coordinates, a cut in the first 120 s of driving is taken for a clock correction.
+- **Lost minus signs.** If OCR drops the minus sign on every reading of a video, the sign vote can't see it, and the positions land in the wrong hemisphere. The map in the Check panel shows it.
 
 ## Appendix A: validated reference material
 
@@ -1258,13 +1356,16 @@ Everything below was run on 2026-11-06 against the sample frame and synthetic te
 - Tesseract 5.3.4 (called directly, A.2) and rapidocr_onnxruntime 1.2.3;
 - ExifTool 13.61, Pillow 12.3 and OpenCV 5.0.
 
+The 1.4 additions (the signed coordinate format, the cut classification and the cluster-based timelapse detection) were run on 2026-11-07, with Tesseract 5.3.4, rapidocr_onnxruntime 1.2.3 and OpenCV 5.0, against the two screenshots supplied that day and synthetic data. The code in A.1, A.7 and A.8 is the code that was run: every row and scenario of 1.3 still passes, and the new ones pass.
+
 ### A.1 Stamp parser
 
 ```python
 """Parse one OCR'd dashcam stamp line: speed, position, local date and time.
 
-Formats: VIOFO decimal degrees (S12.035136 E13.955326), Garmin degrees + decimal minutes
-(hddd°mm.mmm'), degrees-minutes-seconds, and decimal degrees with a trailing hemisphere;
+Formats: VIOFO decimal degrees (S12.035136 E13.955326), degrees + decimal minutes
+(hddd°mm.mmm'), degrees-minutes-seconds, decimal degrees with a trailing hemisphere, and, when the
+profile asks for it, signed decimal degrees with no hemisphere (Garmin: -26.36774 27.31358);
 YYYY-MM-DD, DD-MM-YYYY and MM-DD-YYYY dates; 24-hour and 12-hour (AM/PM) clocks.
 Never relies on spaces: RapidOCR (and Tesseract when the whitelist omits the space)
 runs tokens together, e.g. "E13.955326CUSTOM" or "XX15-03-2025".
@@ -1290,6 +1391,20 @@ COORD_DD = re.compile(                                        # VIOFO: S12.03513
     rf"(?P<lath>{HEM_LAT})\s*(?P<lat>\d{{1,2}}\.\d{{4,7}})\s*{DEG}?\s*[,;]?\s*(?P<lonh>[EW])\s*(?P<lon>\d{{1,3}}\.\d{{4,7}})"
     rf"|(?P<lat2>\d{{1,2}}\.\d{{4,7}})\s*{DEG}?\s*(?P<lath2>[NS])\s*[,;]?\s*(?P<lon2>\d{{1,3}}\.\d{{4,7}})\s*{DEG}?\s*(?P<lonh2>[EW])",
     re.I)
+SIGN = r"[-\u2212\u2013]"                # minus, and the Unicode minus / en dash OCR returns for it
+COORD_SDD = re.compile(                                       # Garmin: -26.36774 27.31358 (signed, no hemisphere)
+    rf"(?:(?P<las>{SIGN})|(?<![\d.\-\u2212\u2013]))(?P<lat>\d{{1,2}}\.\d{{4,7}})(?:\s*[,;]\s*|\s+)"
+    rf"(?P<los>{SIGN})?(?P<lon>\d{{1,3}}\.\d{{4,7}})(?!\d)")
+
+
+def _coord_sdd_exact(decimals: int) -> re.Pattern:
+    """Signed decimal degrees with a known number of decimals: also splits run-together text
+    such as "-26.3677427.31358", where only the decimal count says where latitude ends."""
+    return re.compile(
+        rf"(?:(?P<las>{SIGN})|(?<![\d.\-\u2212\u2013]))(?P<lat>\d{{1,2}}\.\d{{{decimals}}})\s*[,;]?\s*"
+        rf"(?P<los>{SIGN})?(?P<lon>\d{{1,3}}\.\d{{{decimals}}})")    # no end check: speed may follow
+
+
 DATE_TIME = re.compile(
     r"(?:(?P<y1>\d{4})[-/.](?P<m1>\d{1,2})[-/.](?P<d1>\d{1,2})"          # YYYY-MM-DD
     r"|(?P<p>\d{1,2})[-/.](?P<q>\d{1,2})[-/.](?P<y2>\d{4}))"             # DD-MM-YYYY or MM-DD-YYYY
@@ -1304,20 +1419,29 @@ class StampReading:
     lon: float | None = None
     local: dt.datetime | None = None          # camera local time, naive
     date_ambiguous: bool = False              # day and month both <= 12: the order came from date_order
-    coord_format: str | None = None           # "dd" | "ddm" | "dms"
+    coord_format: str | None = None           # "dd" | "ddm" | "dms" | "sdd"
 
 
 def _sign(h: str, v: float) -> float:
     return -v if h.upper() in ("S", "$", "5", "W") else v
 
 
+def _blank(text: str, m: re.Match) -> str:
+    return text[:m.start()] + " " * (m.end() - m.start()) + text[m.end():]
+
+
 def parse_stamp(text: str, date_order: str = "DMY", *, min_year: int = 2010,
-                max_year: int | None = None) -> StampReading:
+                max_year: int | None = None, signed_dd: bool = False,
+                coord_decimals: int | None = None) -> StampReading:
+    """signed_dd: also accept signed decimal degrees with no hemisphere letter (Garmin). Off by
+    default, because a lost minus sign can't be seen in a single reading (see the sign vote, §8.4).
+    coord_decimals: the stamp's fixed number of decimals, so run-together coordinates can be split.
+    Speed is searched last, in the text left after the date/time and the coordinates are taken
+    out, so digits that run into "KM/H" ("27.3135870KM/H") can't be read as the speed."""
     max_year = max_year or dt.date.today().year + 1
     speed = lat = lon = when = fmt = None
     ambiguous = False
-    if m := SPEED.search(text):
-        speed = float(m["v"]) * (1.609344 if m["u"].upper() == "MPH" else 1.0)
+    rest = text
     if m := COORD_DMS.search(text):
         la = int(m["latd"]) + int(m["latm"]) / 60 + float(m["lats"]) / 3600
         lo = int(m["lond"]) + int(m["lonm"]) / 60 + float(m["lons"]) / 3600
@@ -1333,8 +1457,14 @@ def parse_stamp(text: str, date_order: str = "DMY", *, min_year: int = 2010,
             cand = (_sign(m["lath"], float(m["lat"])), _sign(m["lonh"], float(m["lon"])), "dd")
         else:
             cand = (_sign(m["lath2"], float(m["lat2"])), _sign(m["lonh2"], float(m["lon2"])), "dd")
+    elif signed_dd and (m := (coord_decimals and _coord_sdd_exact(coord_decimals).search(text))
+                        or COORD_SDD.search(text)):
+        cand = (-float(m["lat"]) if m["las"] else float(m["lat"]),
+                -float(m["lon"]) if m["los"] else float(m["lon"]), "sdd")
     else:
         cand = None
+    if m:
+        rest = _blank(rest, m)
     if cand and -90 <= cand[0] <= 90 and -180 <= cand[1] <= 180 and (cand[0], cand[1]) != (0.0, 0.0):
         lat, lon, fmt = round(cand[0], 7), round(cand[1], 7), cand[2]
     for m in DATE_TIME.finditer(text):
@@ -1362,7 +1492,10 @@ def parse_stamp(text: str, date_order: str = "DMY", *, min_year: int = 2010,
         except ValueError:
             continue
         ambiguous = amb
+        rest = _blank(rest, m)
         break
+    if (m := SPEED.search(rest)) and int(m["v"]) <= 300:      # 870 km/h is digits run into the unit
+        speed = float(m["v"]) * (1.609344 if m["u"].upper() == "MPH" else 1.0)
     return StampReading(speed, lat, lon, when, ambiguous, fmt)
 ```
 
@@ -1414,9 +1547,28 @@ def parse_stamp(text: str, date_order: str = "DMY", *, min_year: int = 2010,
 | `12°02.108' E013°57.320' 84 KM/H 15/03/2025 10:56:44` (hemisphere lost) | DMY | 84 | | | 2025-03-15 10:56:44 | no | |
 | `N4736.123 W12219.456 35 MPH 10/25/2025 04:23:15 PM` (degree signs lost) | MDY | 56.32704 | | | 2025-10-25 16:23:15 | no | |
 
+Tables 1 and 2 pass with `signed_dd` off (the default) and on.
+
+**Table 3: real stamps and the signed format (new in 1.4).** The last column gives the options: **Garmin** is the Garmin profile's `signed_dd=True, coord_decimals=5`; **signed** is `signed_dd=True` with no decimal count; **none** is the defaults, as for VIOFO. The plate and custom text of the real VIOFO stamp are masked.
+
+| OCR text | order | speed_kmh | lat | lon | local | ambiguous | format | options |
+|---|---|---|---|---|---|---|---|---|
+| `GARMIN 01/11/2020 07:17:05 -26.36774 27.31358 70 KM/H` (both engines, real frame) | DMY | 70 | -26.36774 | 27.31358 | 2020-11-01 07:17:05 | yes | sdd | Garmin |
+| `GARMIN 01/11/2020 07:17:05 -26.36774 27.31358 70 KM/H` | MDY | 70 | -26.36774 | 27.31358 | 2020-01-11 07:17:05 | yes | sdd | Garmin |
+| `GARMIN 01/11/2020 07:17:05 -26.36774 27.31358 70 KM/H` | DMY | 70 | -26.36774 | 27.31358 | 2020-11-01 07:17:05 | yes | sdd | signed |
+| `GARMIN 01/11/2020 07:17:05 -26.36774 27.31358 70 KM/H` (1.3 behaviour) | DMY | 70 | | | 2020-11-01 07:17:05 | yes | | none |
+| `GARMIN01/11/202007:17:05-26.3677427.31358 70KM/H` (spaces lost) | DMY | 70 | -26.36774 | 27.31358 | 2020-11-01 07:17:05 | yes | sdd | Garmin |
+| `GARMIN01/11/202007:17:05-26.3677427.3135870KM/H` (spaces lost) | DMY | 70 | -26.36774 | 27.31358 | 2020-11-01 07:17:05 | yes | sdd | Garmin |
+| `GARMIN01/11/202007:17:05-26.3677427.3135870KM/H` (no decimal count: can't split; 870 km/h rejected) | DMY | | | | 2020-11-01 07:17:05 | yes | | signed |
+| `GARMIN 01/11/2020 07:17:05 −26.36774 27.31358 70 KM/H` (Unicode minus) | DMY | 70 | -26.36774 | 27.31358 | 2020-11-01 07:17:05 | yes | sdd | Garmin |
+| `GARMIN 01/11/2020 07:17:05 26.36774 27.31358 70 KM/H` (minus lost: the sign vote drops it) | DMY | 70 | 26.36774 | 27.31358 | 2020-11-01 07:17:05 | yes | sdd | Garmin |
+| `GARMIN 10/25/2025 04:23:15 PM 47.60205 -122.32427 35 MPH` | MDY | 56.32704 | 47.60205 | -122.32427 | 2025-10-25 16:23:15 | no | sdd | Garmin |
+| `GARMIN 25/10/2025 16:23:15 -26.36774 27.31358 0 KM/H` | DMY | 0 | -26.36774 | 27.31358 | 2025-10-25 16:23:15 | no | sdd | Garmin |
+| `84 KM/H S12.035136 E13.955326 CUSTOM V1OFO A129 PIusAA-00-BB 15-03-2025 10:56:44` (RapidOCR, real frame) | DMY | 84 | -12.035136 | 13.955326 | 2025-03-15 10:56:44 | no | dd | none |
+
 ### A.2 Crop and OCR settings
 
-Crop: `frame[int(H * 0.955):H, 0:W]`. That is 72 rows on a 1600-px frame.
+Crop: `frame[int(H * 0.955):H, 0:W]`. That is 72 rows on a 1600-px frame. Garmin (1.4): `frame[int(H * 0.95):H, 0:int(W * 0.62)]`, 54 rows on a 1080-px frame.
 
 ```python
 import os
@@ -1571,12 +1723,14 @@ This snippet assumes every value is known. The real implementation leaves out wh
 
 ### A.7 Stamp clock fit, in segments
 
-Reference implementation of §8.4 and §8.7. It assumes stamp-only data, so the first segment's zone is passed in from `start_zone()`. With a real GPS clock, measure each segment's zone instead.
+Reference implementation of §8.4 and §8.7. It assumes stamp-only data, so the first segment's zone is passed in from `start_zone()`. With a real GPS clock, measure each segment's zone instead. Readings may carry the stamp's lat/lon, which tells a cut from a clock correction (new in 1.4).
 
 ```python
-"""Stamp clock fit v2: piecewise segments, time-zone vs clock-correction steps, per-frame fallback."""
+"""Stamp clock fit v3: piecewise segments, each step classified as a time-zone change, a clock
+correction or a cut in an edited video; per-frame fallback."""
 from __future__ import annotations
 import datetime as dt
+import math
 import statistics
 from dataclasses import dataclass, field
 
@@ -1586,21 +1740,33 @@ MIN_RUN = 3                              # a clock level / segment needs this ma
 ZONE_STEP_S = 900                        # zone offsets are multiples of 15 min
 ZONE_SLACK_S = 90                        # |step - k*15min| <= 90 s  ->  a time-zone change
 EDGE_S = 10.0                            # a segment may be extrapolated this far past its first/last reading
+SYNC_WINDOW_S = 120.0                    # without positions, a step this soon after the first reading is a clock correction
+CUT_MIN_M = 200.0                        # a position jump larger than this ...
+MAX_SPEED_MS = 50.0                      # ... and faster than 180 km/h means the footage was cut
+POS_GAP_S = 30.0                         # positions further apart than this in time can't judge a step
 
 
 def _secs(local: dt.datetime) -> float:
     return (local - EPOCH).total_seconds()
 
 
+def _dist_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    a = math.sin((p2 - p1) / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(math.radians(lon2 - lon1) / 2) ** 2
+    return 2 * 6_371_000.0 * math.asin(math.sqrt(a))
+
+
 @dataclass
 class Segment:
-    t_first: float                       # first / last reading (video seconds)
+    t_first: float                       # first / last reading (driving seconds)
     t_last: float
-    base: float                          # local clock at video t=0, seconds from EPOCH
+    base: float                          # local clock at t=0, seconds from EPOCH
     zone_h: float = 0.0                  # UTC offset of this segment, hours
-    step_in: str = "start"               # "start" | "tz" | "sync"
-    lo: float = 0.0                      # coverage in video seconds (set by fit)
+    step_in: str = "start"               # "start" | "tz" | "sync" | "cut"
+    lo: float = 0.0                      # coverage in driving seconds (set by fit)
     hi: float = 0.0
+    pos_first: tuple[float, float, float] | None = None   # (t, lat, lon), median of the first 3 positioned readings
+    pos_last: tuple[float, float, float] | None = None    # the same for the last 3
 
 
 @dataclass
@@ -1621,9 +1787,29 @@ class ClockFit:
         return None
 
 
-def fit_stamp_clock(readings: list[tuple[float, dt.datetime]], zone_start_h: float) -> ClockFit:
-    """readings: (video t, stamp local datetime) for every stamp whose date/time parsed."""
-    obs = sorted((t, _secs(loc) - t) for t, loc in readings)
+def _median_pos(points):
+    if not points:
+        return None
+    return (statistics.median(p[0] for p in points), statistics.median(p[1] for p in points),
+            statistics.median(p[2] for p in points))
+
+
+def _moved(a: Segment, b: Segment) -> tuple[bool | None, float | None]:
+    """Did the vehicle jump between segment a and segment b? None if positions can't tell."""
+    if not a.pos_last or not b.pos_first:
+        return None, None
+    gap = b.pos_first[0] - a.pos_last[0]
+    if gap > POS_GAP_S:
+        return None, None
+    m = _dist_m(a.pos_last[1], a.pos_last[2], b.pos_first[1], b.pos_first[2])
+    return m > max(CUT_MIN_M, MAX_SPEED_MS * gap), m
+
+
+def fit_stamp_clock(readings, zone_start_h: float) -> ClockFit:
+    """readings: (t, stamp local datetime) or (t, local, lat, lon), t in driving seconds, for every
+    stamp whose date/time parsed. lat/lon may be None. Positions let a step be told apart from a cut."""
+    pos = {r[0]: (r[2], r[3]) for r in readings if len(r) >= 4 and r[2] is not None and r[3] is not None}
+    obs = sorted((r[0], _secs(r[1]) - r[0]) for r in readings)
     if len(obs) < MIN_RUN:
         return ClockFit(events=[f"clock fit failed: {len(obs)} readings"])
     # 1. clock levels: 1-D clusters of offsets, split where neighbours differ by > TOL_S
@@ -1658,26 +1844,46 @@ def fit_stamp_clock(readings: list[tuple[float, dt.datetime]], zone_start_h: flo
             merged.append((list(r), k))
     if not merged:
         return ClockFit(events=["clock fit failed: no 3 consistent readings"])
-    segs = [Segment(r[0][0], r[-1][0], statistics.median(o for _, o in r) + 0.5) for r, _ in merged]
+    segs = []
+    for r, _ in merged:
+        located = [(t, *pos[t]) for t, _ in r if t in pos]
+        segs.append(Segment(r[0][0], r[-1][0], statistics.median(o for _, o in r) + 0.5,
+                            pos_first=_median_pos(located[:3]), pos_last=_median_pos(located[-3:])))
     fit = ClockFit(segs)
-    # 3. classify steps; clock corrections re-base the earlier segment onto the later (GPS-synced) clock
+    t0 = obs[0][0]
+    # 3. classify each step. A position jump means a cut; otherwise a 15-min multiple is a zone change;
+    #    otherwise a clock correction, unless it comes late in a video with no positions to judge it.
+    jumps: list[float | None] = [None]
     for a, b in zip(segs, segs[1:]):
         d = b.base - a.base
         k = round(d / ZONE_STEP_S)
-        b.step_in = "tz" if k != 0 and abs(d - k * ZONE_STEP_S) <= ZONE_SLACK_S else "sync"
+        moved, m = _moved(a, b)
+        jumps.append(m)
+        if moved:
+            b.step_in = "cut"
+        elif k != 0 and abs(d - k * ZONE_STEP_S) <= ZONE_SLACK_S:
+            b.step_in = "tz"
+        elif moved is False or b.t_first - t0 <= SYNC_WINDOW_S:
+            b.step_in = "sync"
+        else:
+            b.step_in = "cut"
+    # 4. clock corrections re-base the earlier segment onto the later (GPS-synced) clock; a cut stops it
     for j in range(len(segs) - 2, -1, -1):
         if segs[j + 1].step_in == "sync":
             fit.events.append(f"clock corrected by {segs[j + 1].base - segs[j].base:+.1f} s at t={segs[j + 1].t_first:.1f} s")
             segs[j].base = segs[j + 1].base
-    # 4. zones forward from the start zone; UTC stays continuous across a zone change
+    # 5. zones forward from the start zone; UTC stays continuous across a zone change, not across a cut
     segs[0].zone_h = zone_start_h
-    for a, b in zip(segs, segs[1:]):
+    for j, (a, b) in enumerate(zip(segs, segs[1:]), 1):
         if b.step_in == "tz":
             b.zone_h = a.zone_h + round((b.base - a.base) / ZONE_STEP_S) * ZONE_STEP_S / 3600
             fit.events.append(f"time zone {a.zone_h:+.2f} h -> {b.zone_h:+.2f} h at t={b.t_first:.1f} s")
         else:
             b.zone_h = a.zone_h
-    # 5. coverage: boundaries halfway between segments; ends extrapolated by EDGE_S
+            if b.step_in == "cut":
+                why = f"moved {jumps[j]:.0f} m" if jumps[j] is not None else "no positions, late step"
+                fit.events.append(f"cut at t={b.t_first:.1f} s: clock {b.base - a.base:+.1f} s, {why}")
+    # 6. coverage: boundaries halfway between segments; ends extrapolated by EDGE_S
     for j, s in enumerate(segs):
         s.lo = s.t_first - EDGE_S if j == 0 else (segs[j - 1].t_last + s.t_first) / 2
         s.hi = s.t_last + EDGE_S if j == len(segs) - 1 else (s.t_last + segs[j + 1].t_first) / 2
@@ -1719,6 +1925,16 @@ def per_frame_fallback(frames: list[tuple[float, dt.datetime | None]], zone_h: f
 | Sync at 12 s, then zone +1 h at 100 s | Steps `start, sync, tz`. UTC continuous throughout. |
 | 2 readings, or 30 random offsets | Unresolved, so the per-frame fallback is used. |
 | Per-frame fallback | Good frames give `stamp + 0.5 s` and `UTC = local − zone`. A frame misread by 7 min is dropped, even when it sits next to a good frame. |
+
+All of the above also pass with positions on every reading (the vehicle moving north at 20 m/s). New in 1.4:
+
+| Scenario | Result |
+|---|---|
+| Cut at t = 90 s: clock +2 h 13 min 7 s, position 35 km east | Steps `start, cut`. Nothing re-based: UTC at 50.5 s and at 150.5 s each follow their own clip. Zone stays +1 h. Event `cut at t=90.5 s: clock +7987.0 s, moved 35000 m`. |
+| Cut at t = 90 s that looks like a zone change: clock +1 h, position 35 km east | Steps `start, cut`. Zone stays +1 h. |
+| Late step with no positions: clock +200 s at t = 150 s | Steps `start, cut`. Event `… no positions, late step`. |
+| Late correction with continuous positions: clock 200 s slow until t = 150 s | Steps `start, sync`. Early frames re-based. |
+| Zone +1 h at t = 60 s, then a cut at t = 120 s | Steps `start, tz, cut`. Zone +1 → +2 h, kept across the cut. |
 
 ### A.8 Time base: normal video and timelapse
 
@@ -1768,14 +1984,22 @@ def slope(points: list[tuple[float, float]]) -> float | None:
     return statistics.median(s) if len(s) >= 2 else None
 
 
-def detect(playback_fps: float, *, stamp: list[tuple[float, float]] = (), gps_blocks: list[tuple[int, float]] = (),
-           block_video_s: float = 1.0, declared: TimeBase | None = None) -> tuple[TimeBase, list[str]]:
-    """stamp: (video t, stamp seconds); gps_blocks: (block index, fix UTC seconds)."""
+def detect(playback_fps: float, *, stamp_clusters: list[list[tuple[float, float]]] = (),
+           gps_blocks: list[tuple[int, float]] = (), block_video_s: float = 1.0,
+           declared: TimeBase | None = None) -> tuple[TimeBase, list[str]]:
+    """stamp_clusters: a few (video t, stamp seconds) reads, 1 video-second apart, at each of 10 %,
+    50 % and 90 % of the file. The slope is taken inside each cluster and the median across them,
+    so a title card, or a cut between clusters in an edited video, can't bias it.
+    gps_blocks: (block index, fix UTC seconds)."""
     notes, measured = [], None
-    for name, pts in (("stamp", list(stamp)), ("gps", [(i * block_video_s, u) for i, u in gps_blocks])):
-        m = slope(pts)
-        if m is not None:
-            measured = (name, m); break
+    per = [m for c in stamp_clusters if (m := slope(list(c))) is not None]
+    if per:
+        m = statistics.median(per)
+        if len(per) > 1 and max(per) - min(per) > SNAP_TOL * m:
+            notes.append("speed-up differs along the file: " + ", ".join(f"x{p:.1f}" for p in per))
+        measured = ("stamp", m)
+    elif (m := slope([(i * block_video_s, u) for i, u in gps_blocks])) is not None:
+        measured = ("gps", m)
     if declared:
         if measured:
             mode, sp = snap(measured[1], playback_fps)
@@ -1800,9 +2024,9 @@ def sample_frames(n_frames: int, tb: TimeBase, per_driving_s: float, max_frames:
 
 | Check | Result |
 |---|---|
-| Stamp: 1 fps timelapse (stamp +1 s per frame, read at frames 5, 37, 66, 95, 128) | `timelapse`, ×30, source `stamp` |
+| Stamp: 1 fps timelapse (stamp +1 s per frame; 3 clusters of 3 reads at 10, 50 and 90 % of a 60 s file) | `timelapse`, ×30, source `stamp` |
 | Stamp: 2 fps timelapse | `timelapse`, ×15 |
-| Stamp: normal video, read at 0.5 … 4.5 s | `normal`, ×1 |
+| Stamp: normal video, 3 clusters across 180 s | `normal`, ×1 |
 | GPS: VIOFO blocks, 1 per video second, fixes 30 s apart | `timelapse`, ×30, source `gps` |
 | GPS: fixes 1 s apart | `normal`, ×1 |
 | No evidence | `normal`, source `assumed`, with a note |
@@ -1813,10 +2037,13 @@ def sample_frames(n_frames: int, tb: TimeBase, per_driving_s: float, max_frames:
 | 0.5 per driving second | 900 frames, every 2nd frame |
 | 5 per driving second | Capped at every frame (1800) |
 | Normal 30 fps, 1 per second, 180 frames | Frames 15, 45, 75, …, the same as `frame_times()` |
+| Title card: no stamp in the first 10 s of a 1 fps timelapse (new in 1.4) | ×30 from the other clusters |
+| Cut between clusters: normal video, clock +3 h at 200 s of 600 (new in 1.4) | `normal`, ×1. One Theil–Sen fit over all 9 reads would say ×12.2. |
+| Cut inside one cluster (new in 1.4) | ×1 from the median of the clusters, and a note that the speed-up differs along the file |
 
 **End to end** (`test_pipeline_timelapse.py` scenario). A 90-frame, 30 fps `mp4v` clip whose stamp advances 1 s and 0.00021° per frame:
 
-- 3 stamp reads detect `timelapse ×30`, with a 1.0 s capture interval;
+- 3 stamp reads (1.2 detection; 1.4 reads one cluster of 9 frames in a clip this short) detect `timelapse ×30`, with a 1.0 s capture interval;
 - sequential decoding and seeking by frame number each read the right stamp on 10 of 10 test frames;
 - 30 graded frames (every 3rd) were OCR'd in 3.9 s;
 - the clock fit on driving time gives one segment, with no events. Frame 31: `elapsed` 31 s, video time 1.033 s, local 10:57:15.5 (captured at 10:57:15);
