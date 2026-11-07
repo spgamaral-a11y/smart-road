@@ -1,0 +1,36 @@
+# Implementation plan for multi-camera road surveys
+
+Branch `feature/dashcam-survey-export` starts at `af57388`. [Specification v1.2](SPEC_EXPORT_GPS_CSV.md) defines the schemas, defaults, algorithms and tests. The release delivers repeatable exports of georeferenced road-condition observations across drives. Start with the VIOFO A129 Plus and qualify other cameras against the same output contract.
+
+## Delivery sequence
+
+| Phase | Implementation | Acceptance |
+|---|---|---|
+| 0 · Measure real footage | Inspect an original normal A129 Plus MP4 and a 1 fps timelapse. Record file names, ExifTool GPS variant, fixes and container clocks, and Tesseract readings on five frames in `DATA/docs/DASHCAM_NOTES.md`. Compare stamp, filename, container and GPS clocks. Measure timelapse block cadence and stamp progression. | Establish the camera offset, container time convention and speed-up from the footage. Start with Angola UTC+1 as a hypothesis. Keep footage and the masked strip private by default. Stop for review. |
+| 1 · Export one video | Move shared inference and drawing out of `app.py`. Reuse the existing grader, class mapping and ROI. Add keyword-only bottom cutoff to both detection paths and the inspected-area calculation. Add local-file input, export settings, frame-number sampling using a normal-speed TimeBase and the raw/annotated JPEG options in §§5–6. Decode with OpenCV in-process and stream images to disk. | A six-second normal clip at one frame per driving second yields six graded JPEGs. Verify source-resolution box scaling, footer, save filters and preview/photo regression tests. |
+| 2 · Freeze the CSV contract | Define the column tuples in one module. Emit one frame row for every graded sample, one detection row for each feature and one status row per video. Write run settings, weights, geometry, commit and totals to run.json. Implement per-video commit ordering before adding batch controls. | Check exact bytes and column order for Standard and Excel PT/EU. Load Standard in pandas and open PT/EU in Portuguese Excel. Check empty coordinates, zero-detection frames, relative image paths and simulated partial writes. |
+| 3 · Resolve location and driving time | Implement built-in Novatek and optional ExifTool readers. Extend the existing Track and GPX reader for multiple files, GPX 1.0/1.1 and unnamespaced files. Add Tesseract/RapidOCR, segmented clocks, per-frame fallback, GPS gap flags and the location-only preflight. Detect timelapse per clip from stamps or GPS slope, check manual overrides, and use driving time for clocks and tracks. Read every graded timelapse stamp. Add JPEG EXIF and track GPX when available. | Pass the synthetic stamp, clock-change and timelapse scenarios in §11. On the reference drive, check the route, start time within 1 s of the stamp, and embedded/stamp separation below 15 m median and 40 m maximum after applicable lag correction. At 30× speed-up frame 30 of a 30 fps file must have video time 1 s and elapsed driving time 30 s. Stop for review. |
+| 4 · Batch, resume and merge | Implement recursive case-insensitive scanning, front-camera filtering, progress and per-video failures. Use the same pipeline in Streamlit and the run/gps/merge CLI. Commit frame/detection rows before marking a video done. On resume clean incomplete rows, skip completed videos and retry unfinished work. Merge the latest completed result per stable video ID across all three tables. Add a frame-condition map. | Stop and resume a batch of at least ten clips. Check unique frame keys, matching detection parents, existing image references, and a terminal status or failure reason for every input. Merge overlapping runs including a newer failed attempt. Verify that all exported rows for each video come from one completed run. |
+| 5 · Release and field pilot | Complete per-detection quantities and units, operator documentation, dependency setup, and repeatable CLI and QGIS examples. Document camera calibration and interpretation limits. Consider optional lag calibration, stamp masking, GeoJSON and skipping stopped frames after required acceptance. | Open merged Standard output in QGIS as WGS84 points (X = lon, Y = lat). Run one representative drive per available camera setup. Record elapsed processing time, disk use per driving hour, coverage, GPS gaps and a visual sample of detections before sizing a national batch. |
+
+After each phase run `python -m pytest tests -q` and commit as `phase N: <summary>`. Keep optional dependencies lazy so core tests run in light CI. Run OpenCV/OCR integration tests in a fully equipped environment as well. Use the Ubuntu workstation for local field trials and retain Windows dependency discovery specified in §5.4.
+
+## Camera acceptance
+
+| Input | Preferred evidence | Field check |
+|---|---|---|
+| VIOFO A129 Plus | Embedded Novatek/ExifTool fixes and independent burned-in stamp. For timelapse, prefer valid per-frame stamp positions. | Run the same original clip through embedded and overlay modes. Inspect start, middle, end and GPS gaps. |
+| Garmin | Use ExifTool SampleTime for relative fix alignment. Use an independently established recording clock. Parse decimal degrees, DDM and DMS plus supported local date formats. | Start with rendered fixtures. Record the model and verify a real clip when available before claiming field validation. |
+| Smartphone | Use a timestamped GPX spanning the drive and a verified recording start when the phone supplies no timed GPS track. If only a single file-level location exists, export grades with missing route coordinates. | Check first, middle and last samples against timed references, especially on variable-frame-rate footage. If frame number divided by nominal fps drifts, record the affected recording mode and require a timestamp-aware sampler before qualifying it. |
+
+For a mixed folder, explicitly test a VIOFO front/rear pair alongside an ordinary Garmin or phone filename. The literal front-only rule in §5.1 can exclude unlabelled files when VIOFO suffixes occur anywhere in the scan. For v1.2, use separate device folders/runs, preview the scan list, then merge. This also allows each device and mount its own GPS source, stamp region and geometry.
+
+## Using the national dataset
+
+Use frames.csv as the coverage table, including samples with zero detections. Join detections.csv on run_id, video_id and frame_index, then join videos.csv for clock and GPS coverage and run.json for settings. Keep missing-location rows in coverage totals and exclude them from point mapping. GPS points describe the camera at capture. Adjacent frames and repeat drives can show the same defect.
+
+For the pilot, report graded frames, the share with usable coordinates, and the share of graded frames containing each distress by drive. Record sampling rate and camera setup when comparing drives. Frame PCI and quantities depend on camera geometry. Road-section PCI, unique defect counts, map matching and nationwide representativeness require a later analysis design.
+
+## First handoff
+
+Supply the original normal and timelapse VIOFO files with their original names. A Garmin clip and a phone video with its matching GPX improve device qualification and can follow later. Phase 0 ends with the measured defaults and discrepancies for review.
