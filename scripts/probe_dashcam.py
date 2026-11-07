@@ -34,12 +34,14 @@ Everything goes to Output/probe/ (git ignores Output/):
     <clip>/frame_50pct_stamp_masked.jpg and <clip>/static_map.png: geometry hints, with the
                        stamp area blacked out.
 
-Needs Python with opencv-python and numpy (both in requirements.txt), Tesseract and
-ExifTool. On Windows:
+Needs Python with opencv-python (or opencv-python-headless) and numpy, Tesseract and
+ExifTool. On Ubuntu:
 
-    winget install -e --id UB-Mannheim.TesseractOCR
-    winget install -e --id OliverBetz.ExifTool
+    sudo apt install tesseract-ocr libimage-exiftool-perl
     pip install rapidocr_onnxruntime        (optional, a second OCR engine)
+
+On Windows: winget install -e --id UB-Mannheim.TesseractOCR, and
+winget install -e --id OliverBetz.ExifTool. On macOS: brew install tesseract exiftool.
 
 This is a diagnostic, not part of the app. The stamp parser and the timelapse detection
 below are byte-for-byte copies of spec A.1 and A.8; the Novatek reader follows spec A.3.
@@ -316,10 +318,12 @@ def coarse(v: float | None, args) -> float | None:
 
 
 # ------------------------------------------------------------------------------ tools
-WINGET = {"tesseract": "winget install -e --id UB-Mannheim.TesseractOCR",
-          "exiftool": "winget install -e --id OliverBetz.ExifTool"}
-ELSEWHERE = {"tesseract": "macOS: brew install tesseract; Debian/Ubuntu: sudo apt install tesseract-ocr",
-             "exiftool": "macOS: brew install exiftool; Debian/Ubuntu: sudo apt install libimage-exiftool-perl"}
+INSTALL = {
+    "linux": {"tesseract": "sudo apt install tesseract-ocr", "exiftool": "sudo apt install libimage-exiftool-perl"},
+    "win32": {"tesseract": "winget install -e --id UB-Mannheim.TesseractOCR",
+              "exiftool": "winget install -e --id OliverBetz.ExifTool"},
+    "darwin": {"tesseract": "brew install tesseract", "exiftool": "brew install exiftool"},
+}
 WINDOWS_PLACES = {
     "tesseract": [r"C:\Program Files\Tesseract-OCR\tesseract.exe",
                   r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe"],
@@ -787,8 +791,11 @@ def exiftool_section(exe: str, path: Path, clip_dir: Path, gps: dict | None, mvh
     spec_cmd = [exe, "-ee3", "-api", "debug=1", "-G3", "-a", "-s", "-GPSType", "-GPSDateTime",
                 "-GPSLatitude", "-GPSLongitude", "-GPSSpeed", str(path)]
     rc, text, err, secs = run(spec_cmd, 180)
-    if rc != 0:                                    # older ExifTool without -ee3 or the debug option
+    if rc != 0:                                    # older ExifTool without the debug option ...
         spec_cmd = [a for a in spec_cmd if a not in ("-api", "debug=1")]
+        rc, text, err, secs = run(spec_cmd, 180)
+    if rc != 0:                                    # ... or without -ee3
+        spec_cmd = ["-ee" if a == "-ee3" else a for a in spec_cmd]
         rc, text, err, secs = run(spec_cmd, 180)
     (clip_dir / "exiftool_gps.txt").write_text(text + ("\n" + err if err else ""), encoding="utf-8")
     lines = text.splitlines()
@@ -807,9 +814,11 @@ def exiftool_section(exe: str, path: Path, clip_dir: Path, gps: dict | None, mvh
     (clip_dir / "exiftool_container.txt").write_text(text + ("\n" + err if err else ""), encoding="utf-8")
     out["container"] = text.strip().splitlines()
 
-    rc, text, err, _ = run([exe, "-ee3", "-n", "-j", "-G3", "-a", "-api", "LargeFileSupport=1",
-                            "-GPSDateTime", "-GPSLatitude", "-GPSLongitude", "-GPSSpeed", "-GPSTrack",
-                            "-SampleTime", str(path)], 180)
+    json_cmd = [exe, "-ee3", "-n", "-j", "-G3", "-a", "-api", "LargeFileSupport=1", "-GPSDateTime",
+                "-GPSLatitude", "-GPSLongitude", "-GPSSpeed", "-GPSTrack", "-SampleTime", str(path)]
+    rc, text, err, _ = run(json_cmd, 180)
+    if rc != 0:
+        rc, text, err, _ = run(["-ee" if a == "-ee3" else a for a in json_cmd], 180)
     (clip_dir / "exiftool_gps.json").write_text(text, encoding="utf-8")
     fixes = []
     try:
@@ -1474,10 +1483,13 @@ def main() -> int:
     tools = {"exiftool": find_tool("exiftool", args.exiftool), "tesseract": find_tool("tesseract", args.tesseract)}
     missing = [k for k, v in tools.items() if not v]
     if missing:
-        print("Missing: " + ", ".join(missing))
+        print("Missing: " + ", ".join(missing) + ". Install with:")
+        here = INSTALL.get(sys.platform, INSTALL["linux"])
         for k in missing:
-            print(f"  Windows: {WINGET[k]}\n  {ELSEWHERE[k]}")
-        print("Then open a new terminal and run this again. Or pass --exiftool / --tesseract with the path.")
+            print(f"  {here[k]}")
+        if sys.platform not in INSTALL:
+            print("  (those are Ubuntu's; use your system's package manager)")
+        print("Then run this again (on Windows, in a new terminal). Or pass --exiftool / --tesseract with the path.")
         if not args.allow_missing:
             print("(--allow-missing runs without them, but Phase 0 needs both.)")
             return 2

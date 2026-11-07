@@ -325,11 +325,13 @@ The ▸ On-screen stamp expander contains:
 
 If an optional dependency is missing, its option stays visible but disabled. Its help text says what to install:
 
-| Option | Install |
-|---|---|
-| Tesseract | `winget install -e --id UB-Mannheim.TesseractOCR`. Nothing to install with pip: the app calls `tesseract.exe` itself (A.2). |
-| RapidOCR | `pip install rapidocr_onnxruntime` |
-| ExifTool | `winget install -e --id OliverBetz.ExifTool` |
+| Option | Ubuntu | Windows |
+|---|---|---|
+| Tesseract | `sudo apt install tesseract-ocr` | `winget install -e --id UB-Mannheim.TesseractOCR` |
+| RapidOCR | `pip install rapidocr_onnxruntime` | the same |
+| ExifTool | `sudo apt install libimage-exiftool-perl` | `winget install -e --id OliverBetz.ExifTool` |
+
+Nothing to install with pip for Tesseract: the app calls the `tesseract` program itself (A.2). Show the command for the system the app runs on.
 
 ### 5.5 Main area: single video (Drive video mode)
 
@@ -1215,7 +1217,7 @@ From these, work out:
 - whether the stamp time matches the GPS time;
 - for Garmin, the stamp region, the date order and the Travelapse capture rate.
 
-If ExifTool or Tesseract is missing, give me the `winget` commands from §5.4 and stop.
+If ExifTool or Tesseract is missing, give me the install commands from §5.4 and stop.
 
 `scripts/probe_dashcam.py` collects all of the above per clip and works out the answers below, writing `Output/probe/phase0_report.md` with the stamp text masked (see `DASHCAM_NOTES.md`).
 
@@ -1395,7 +1397,7 @@ The default is used until each question is answered.
 3. **Rear-camera files (`…R.MP4`).** Default: skipped, front camera only.
 4. **Meaning of frames per second.** Answered 2026-11-07: keep sampling per second of driving as the default, one selector for grading and saving. Use the GPS source to tie each graded frame's video time to its position and clock time. Distance-based sampling is not planned.
 5. **Stamp test image.** `tests/data/stamp_a129plus_masked.png` is supplied with this spec. It is the 2560×72 stamp strip from the sample frame, with the plate and custom text painted out. It still shows a position and a date. Should it be committed to this public repo? Default: no, and the test that uses it is skipped.
-6. **Machine.** Default: Windows, with an NVIDIA GPU optional. This decides the ExifTool and Tesseract paths and whether the macOS rules apply.
+6. **Machine.** Answered 2026-11-07: Ubuntu. Tesseract and ExifTool come from apt and are found on the PATH (§5.4). The Windows details (`CREATE_NO_WINDOW`, `C:\Program Files` paths, UTF-8 decoding) stay, so the app keeps working there; the macOS rules don't apply. Whether there is an NVIDIA GPU is still open.
 7. **Garmin footage.** Answered 2026-11-07: the Garmin footage is downloaded from YouTube, so only the stamp survives (§8.10). A screenshot of it set the Garmin profile (§8.9). The ExifTool Garmin path stays covered by unit tests until an original Garmin file is available.
 8. **Local time columns.** Default: *Camera's clock*. Switch to *Fixed UTC offset* if reports must always be in one zone (§8.7).
 9. **Timelapse source.** Which camera records the timelapse, and at what capture rate? Default: an A129 Plus timelapse at 1 fps, played back at 30 fps, with the stamp on. Phase 0 should include one timelapse clip and record three things:

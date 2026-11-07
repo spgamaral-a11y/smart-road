@@ -50,13 +50,19 @@ The screenshots are **not** committed. The VIOFO one shows the licence plate and
 
 ## Collecting the rest: `scripts/probe_dashcam.py`
 
-The probe collects everything Phase 0 needs from a clip and writes `Output/probe/phase0_report.md`. Stamp text in the report is masked to the fields the parser reads, so the plate and custom text don't appear in it. Run it on your machine, where the clips, ExifTool and Tesseract are:
+The probe collects everything Phase 0 needs from a clip and writes `Output/probe/phase0_report.md`. Stamp text in the report is masked to the fields the parser reads, so the plate and custom text don't appear in it. Run it on your machine (Ubuntu), where the clips are. Once:
 
 ```bash
-python scripts/probe_dashcam.py "D:\DCIM\Movie\2025_0315_105644_0012F.MP4" "D:\DCIM\Movie\<timelapse clip>.MP4" "C:\Users\<you>\Downloads\<garmin clip>.mp4"
+sudo apt install tesseract-ocr libimage-exiftool-perl
 ```
 
-If ExifTool or Tesseract is missing, it prints the `winget` commands and stops. The `crops/` folders it writes show the plate: keep them local.
+Then, from the repository folder, with the clips' paths:
+
+```bash
+python3 scripts/probe_dashcam.py ~/Videos/20250313075907_000570R.MP4 ~/Videos/<front clip>F.MP4 "$HOME/Videos/Day 5, Lubango, Angola to Porto Amboim, Angola. Last day of travel.mp4"
+```
+
+It needs Python with `opencv-python` (or `opencv-python-headless`) and `numpy`, as the app does; `pip install rapidocr_onnxruntime` adds a second OCR engine. If ExifTool or Tesseract is missing, it prints the install commands and stops. The `crops/` folders it writes show the plate: keep them local.
 
 ## Clips received (2026-11-07)
 
