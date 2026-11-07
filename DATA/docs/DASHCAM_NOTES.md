@@ -1,6 +1,6 @@
 # Dashcam notes
 
-Phase 0 of `SPEC_EXPORT_GPS_CSV.md`. What the footage shows, as measured, so the profile defaults in spec §8.9 rest on evidence.
+Phase 0 of `SPEC_EXPORT_GPS_CSV.md`. What the footage shows, as measured, so the profile defaults in spec §8.9 rest on evidence. The horizon and bonnet positions are starting values for your own camera settings (spec §5.2); profiles carry no camera settings.
 
 **Status.** Started from two screenshots supplied on 2026-11-07, one VIOFO and one Garmin. Still needed from real files: the ExifTool GPS dump, the container clock (mvhd), the GPS block count, and the stamp read on 5 frames, for a VIOFO normal clip, a VIOFO timelapse clip and a downloaded Garmin clip (spec §10, Phase 0).
 
@@ -24,8 +24,8 @@ The screenshots are **not** committed. The VIOFO one shows the licence plate and
 | Date | `DD-MM-YYYY`. 15-03 is unambiguous because the day is above 12. |
 | OCR | Exact with both engines at 2000×1250 and 1280×800. At 960×600, Tesseract read the year as 2075, which the year check rejects; RapidOCR stayed exact. RapidOCR reads `VIOFO` as `V1OFO` and `Plus` as `PIus`; neither affects parsing, and stamp-token matching normalises `1` to `I`. |
 | Time per crop | Tesseract 128–204 ms, RapidOCR 76–302 ms (the first call loads the model) |
-| Horizon | The road vanishes at y ≈ 0.61 |
-| Bonnet | From y ≈ 0.82, so a hood cut-off of 0.80 |
+| Horizon | The road vanishes at y ≈ 0.61: a starting value for *Horizon row* |
+| Bonnet | From y ≈ 0.82. With the camera settings right, raise *Measure from* until its line sits just above this. |
 | Lens | Strong barrel distortion with dark corners: the lens circle is inside the frame. Tiles in the corners cost time and see little road. |
 | Artefact | A dark reflection on the windscreen sits over the middle of the lane, about x 0.51–0.59, y 0.62–0.83. It doesn't move between frames, so the detector may box it on every frame. A polarising filter removes it at the source. |
 
@@ -35,7 +35,7 @@ The screenshots are **not** committed. The VIOFO one shows the licence plate and
 |---|---|
 | Frame | 1920×1080 |
 | Stamp | `GARMIN 01/11/2020 07:17:05 -26.36774 27.31358 70 KM/H`. White text with a dark edge and no band, over the dashboard. |
-| Stamp position | y 0.965–0.985, x 0.01–0.58; 23 px tall at 1080 px. Profile region: `(0.0, 0.95, 0.62, 1.0)`. |
+| Stamp position | y 0.965–0.985, x 0.01–0.58; 23 px tall at 1080 px. Built-in `Garmin` stamp layout: `(0.0, 0.95, 0.62, 1.0)`. |
 | Coordinates | **Signed decimal degrees with no hemisphere letter**, 5 decimals. The 1.3 parser returned no position for this format; the 1.4 parser reads it when the profile sets `signed_dd` (A.1, Table 3). |
 | Position | −26.36774, 27.31358: west of Johannesburg, South Africa (UTC+2, no daylight saving) |
 | Date | `01/11/2020`: ambiguous, 1 November (DMY) or 11 January (MDY). Garmin units can be set to either order. The video needs a day above 12 somewhere, or the user's choice. |
@@ -43,8 +43,8 @@ The screenshots are **not** committed. The VIOFO one shows the licence plate and
 | Speed | `70 KM/H`, after the coordinates |
 | OCR | Exact with both engines at 1920×1080, 1280×720, 854×480 and 640×360 |
 | Time per crop | Tesseract 111–161 ms, RapidOCR 44–363 ms |
-| Horizon | The road vanishes at y ≈ 0.50 |
-| Bonnet | From y ≈ 0.63, and the dashboard from y ≈ 0.72, so a hood cut-off of 0.62. The road between the horizon and the bonnet is only about 140 px tall, so the measurable band is thin and PCI is coarse. |
+| Horizon | The road vanishes at y ≈ 0.50: a starting value for *Horizon row* |
+| Bonnet | From y ≈ 0.63, and the dashboard from y ≈ 0.72. *Measure from* should put its line just above y 0.63. The road between the horizon and the bonnet is only about 140 px tall, so the measurable band is thin and PCI is coarse. |
 | Other | A hand and a suction mount at the lower left, below the cut-off. Vertical striping across the sky and fields, from compression or scaling; watch whether the detector reads it as cracking. |
 | Source | Downloaded from YouTube, so no camera file name, container clock or embedded GPS survives (spec §8.10). Time and position must come from the stamp. |
 

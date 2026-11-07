@@ -1,4 +1,4 @@
-# Sentinel: implementation plan and review of SPEC_EXPORT_GPS_CSV v1.4
+# Sentinel: implementation plan and review of SPEC_EXPORT_GPS_CSV v1.5
 
 Branch: `sentinel`, based on `af57388`. Companion to `DATA/docs/SPEC_EXPORT_GPS_CSV.md` and `DATA/docs/DASHCAM_NOTES.md`.
 
@@ -9,105 +9,88 @@ Scope: **VIOFO and Garmin dashcams.** Phone footage is out of scope; the source-
 | Date | Decision | Where in the spec |
 |---|---|---|
 | 2026-11-07 | Source profiles; VIOFO and Garmin only; phones later | §8.9 |
-| 2026-11-07 | Sampling stays per second of driving. Each graded frame's video time is tied to its position and clock time through the GPS source, so a grading can be found from the CSV. No distance sampling. | §3, §7 (`map_url`), §12 Q4 |
+| 2026-11-07 | Sampling stays per second of driving. Each graded frame's video time is tied to its position and clock time through the GPS source, so a grading can be found from the CSV. No distance sampling. | §3, §7 (`map_url`) |
 | 2026-11-07 | Exports run in the background | §5.7 |
-| 2026-11-07 | Garmin footage comes from YouTube; the model is unknown | §8.10, §12 Q7 and Q10 |
+| 2026-11-07 | Garmin footage comes from YouTube; the model is unknown | §8.10 |
+| 2026-11-07 | Camera settings are user-set in the sidebar, as in the original GUI. The bonnet exclusion is calculated from them. Profiles carry no camera settings. | §5.2 (M9) |
+| 2026-11-07 | Added: speed-ups that don't change results, stamp reads from decoded frames, stamp layouts saved from the GUI, distance lines | M15–M18 |
 
-## 1. What the screenshots changed (spec 1.4)
+## 1. What 1.5 changed, and why
 
-Both stamps were read with the spec's own OCR settings (A.2), with Tesseract 5.3.4 and RapidOCR. Both engines read both stamps exactly. Details are in `DASHCAM_NOTES.md`.
+### 1.1 Bonnet exclusion from the camera settings
 
-1. **The Garmin stamp uses a format the parser didn't accept.** `GARMIN 01/11/2020 07:17:05 -26.36774 27.31358 70 KM/H` has signed decimal degrees and no hemisphere letter. The 1.3 parser read the time and speed but returned no position, so every Garmin row would have had blank lat/lon. Fixed in A.1, which now accepts this format when the profile switches it on:
-   - The decimal count (5) splits digits that OCR runs together, such as `-26.3677427.31358`.
-   - Speed is read last, so `…27.3135870KM/H` can't become 870 km/h.
-   - A per-video sign vote catches readings where OCR lost the minus sign.
+Today's GUI already measures road only between a near and a far distance. The camera model turns both into image rows from height, focal length and horizon (`Camera.usable_row_range`). The near distance is fixed at 3.0 m in `app.py`. Spec 1.5 builds the bonnet exclusion on that calculation:
 
-   All 36 earlier parser rows still pass, with the new format switched both on and off.
-2. **The Garmin date is ambiguous.** `01/11/2020` could be 1 November or 11 January. YouTube footage has no other date to check it against, so it falls back to DMY with a warning unless the video shows a day above 12 somewhere (§8.10).
-3. **Downloaded footage keeps only the stamp.** YouTube drops the camera's file name, container clock and embedded GPS. Spec §8.10 covers this:
-   - the profile is recognised from the stamp text (`GARMIN`, `VIOFO`);
-   - such files use the stamp alone for time and position;
-   - the UTC offset comes from the setting, which should be +2 for the South African sample;
-   - PCI from YouTube footage reads high, because compression removes fine cracks. Use it to test the pipeline, not to grade roads.
-4. **Edited videos can contain cuts.** The 1.3 clock fit called any clock jump that wasn't a time-zone change a "clock correction", and moved every earlier frame onto the later clock. At a cut, that gives every frame before it the wrong time without any warning. The fit now recognises a cut from a position jump, or from a late step when there are no positions, and leaves both sides alone (A.7).
-5. **Timelapse detection could be fooled** by a title card with no stamp, or by a cut. On one test, a single fit over reads spread across the file reported ×12.2 on normal-speed video. Detection now fits three clusters separately and takes the median (A.8).
-6. **Camera presets measured on the screenshots:**
+- **`Measure from (m)`** sits beside *Measure out to (m)*. Its default, 3.0, is today's fixed value.
+- **The exclusion row** is the image row of *Measure from*, from the camera model. Boxes lying entirely below it are dropped, in the video preview and the export.
+- **The *Hood / stamp cut-off* slider and the profile camera presets are gone.**
 
-   | | Horizon | Sky cut-off | Hood cut-off |
-   |---|---|---|---|
-   | VIOFO | 0.61 | 0.58 | 0.80 |
-   | Garmin | 0.50 | 0.47 | 0.62 |
+A setting is needed alongside the camera height because the bonnet's length belongs to the car, not the camera. On a windscreen dashcam the bonnet typically hides the road out to about 4–7 m. With correct camera settings, a fixed 3 m line would land on the bonnet.
 
-   The sidebar default horizon, 0.139, belongs to the Tashkent camera. Height and focal length are still unmeasured (spec §13).
-7. **Garmin road band.** The visible road between the horizon and the bonnet is only about 140 px tall at 1080p, so PCI from that mount is coarse.
-8. **VIOFO windscreen reflection.** A dark reflection sits over the middle of the lane on the VIOFO frame and doesn't move between frames. See §2.6.
+Checked on the real grading code with three camera geometries: dropping boxes that lie entirely below the row leaves PCI and quantities unchanged. Those boxes never had area inside the measured band; only the "outside measurable band" count shrinks. With the defaults, the row is at 79 % of the frame height on the sample clip.
 
-The code in A.1, A.7 and A.8 is byte-for-byte the code that was run. The 36 rows of parser tables 1–2 and the 12 rows of the new Table 3 pass, as do the 9 old and 5 new clock-fit scenarios and the 16 timelapse checks.
+### 1.2 Distance lines
 
-## 2. Remaining bottlenecks and proposals
+The distance lines replace guessing:
+- the horizon;
+- lines at *Measure from*, every 5 m, and *Measure out to*;
+- lane-width ticks on each line;
+- the unmeasured zone below the *Measure from* line, shaded.
 
-Items marked **[proposal]** are not in the spec; each needs your OK.
+They use the same camera model as grading, so they show exactly what is measured. Tune height, focal length and horizon until the ticks match the lane edges, then raise *Measure from* until its line clears the bonnet. `DASHCAM_NOTES.md` has starting values for the horizon (VIOFO 0.61, Garmin 0.50) and the bonnet line (0.82, 0.63).
 
-### 2.1 Detection throughput is the dominant cost
+### 1.3 Batching was already half done
 
-At 1280×800 with 640 px tiles, each graded frame is about 3–6 tile inferences of YOLO11-L. These are estimates; Phase 1 measures them per stage in `run.log`.
+`detect_tiled` already sends up to 8 tiles per model call. A 1280×800 frame with the default sky cut-off has 3 tiles of 640×440, so each frame was already one call. The speed-up actually added is sending **several frames'** tiles in one call (`detect_tiled_many`, 4 frames by default), fed by the decode-ahead thread. Both can be switched off, and acceptance check 12 requires identical CSVs either way. Expect a gain on a GPU; on a CPU it changes little.
+
+### 1.4 Stamp reads and stamp layouts
+
+- **No second pass.** The export reads the stamp on frames it decodes anyway, and OCR runs alongside detection instead of before it. With VIOFO's embedded GPS clock, only the 9 timebase reads are OCR'd.
+- **Stamp layouts.** The stamp region can be adjusted, suggested and saved from the GUI. *Suggest* uses the method that found both stamps on the screenshots. Saved layouts live in `~/.smartroad/profiles.json`, outside the repository, and each video picks its profile's best-matching layout.
+
+## 2. Remaining review points
+
+Items marked **[proposal]** are not in the spec.
+
+### 2.1 Detection is still the dominant cost
+
+At 1280×800, each graded frame is 3 tile inferences of YOLO11-L. These are estimates; Phase 1 measures them per stage in `run.log`.
 
 | Footage | Frames at 1/s | GPU (est.) | CPU (est.) |
 |---|---|---|---|
 | 3-minute clip | 180 | about 1 min | about 10–25 min |
 | 4 hours of driving | 14 400 | about 1 h | **12–30 h** |
 
-Fixes that don't change results:
+On a CPU, the remaining lever is C4: skipping frames while the vehicle is stopped (already a COULD in the spec).
 
-1. **Batch the tiles [proposal].** Send all of a frame's tiles to `model.predict` in one call, with `half=True` on CUDA. The change goes in `detect_tiled`, behind a keyword argument whose default keeps today's behaviour.
-2. **Decode while detecting [proposal].** Decode and OCR in a producer thread with a bounded queue. OpenCV decoding and Tesseract subprocesses release the GIL.
-3. **Skip stopped frames (C4, already in the spec as COULD).** This is the remaining lever for traffic-light stops, now that distance sampling is out. It leaves the per-second rule intact while moving.
+### 2.2 Seeking accuracy on real codecs [proposal]
 
-### 2.2 The OCR pre-pass is a second pass over every video [proposal]
+The spec's "exact frame" result was measured on synthetic `mp4v` files. Real files are H.264/HEVC with B-frames, where OpenCV seeking can land a few frames off. `iter_samples` should record the frame actually reached (`CAP_PROP_POS_FRAMES` / `CAP_PROP_POS_MSEC`), and Phase 1 should check it on one real clip from each make.
 
-For normal video, spec §8.4 reads the stamp every driving second in a separate pass. At about 110–200 ms per read, that adds 20–40 s per 3-minute clip, and decodes the file a second time.
+### 2.3 Static artefacts [proposal]
 
-- When sampling is 1 per second or faster, every graded frame is already decoded at full resolution. Read the stamp there and keep the pre-pass only for *Check location & time*.
-- Skip OCR entirely when VIOFO's embedded track gives a real GPS clock.
+The VIOFO windscreen reflection sits over the middle of the lane, inside the measured band, so the bonnet exclusion doesn't remove it. Flag a detection as `static_artifact` when a box of the same class sits at the same image position (IoU > 0.5) in most of the previous 10 frames while the vehicle is moving. I recommend waiting until the detector has run on real VIOFO footage, to see whether the reflection actually triggers detections.
 
-### 2.3 Seeking accuracy on real codecs
+### 2.4 Smaller points
 
-The spec's "exact frame" result was measured on synthetic `mp4v` files. Real files are H.264/HEVC with B-frames, where OpenCV seeking can land a few frames off. Record the frame actually reached after each seek (`CAP_PROP_POS_FRAMES` / `CAP_PROP_POS_MSEC`), and check it on one real clip from each make in Phase 1.
-
-### 2.4 Stamp region calibration [proposal]
-
-Garmin layouts differ between models, and the model is unknown. In the Check panel, add four number inputs that live-update the stamp crop, plus **Save to profile**, which writes `Output/profiles.json`. A new layout then needs no code change.
-
-### 2.5 Geometry overlay [proposal]
-
-Height and focal length are unmeasured for both makes, and PCI depends on them. Draw distance lines at 3, 5, 10 and 15 m, plus the width a 3.5 m lane would have at each, on the preview frame. The user then tunes height and focal length until the drawn lane matches the real one. It is cheap, and it's the practical way to calibrate from footage alone.
-
-### 2.6 Static artefacts [proposal]
-
-The VIOFO windscreen reflection, the Garmin mount and the bonnet edges stay at the same place in the image while the road moves. Flag a detection as `static_artifact` when a box of the same class overlaps (IoU > 0.5) boxes at the same position in most of the previous 10 frames while the vehicle is moving. Write it as a column; drop flagged boxes from grading only if you want. This needs nothing beyond the detections the pipeline already has.
-
-### 2.7 Smaller points
-
-- **ExifTool:** cache results per `video_id` in the run folder, so Check, Run and Resume read each file once.
-- **Preview decoding:** the preview re-encodes frames as JPEG, so the preview and the export can differ slightly. Using `iter_samples` for the preview too gives one decode path.
+- **ExifTool:** cache results per `video_id` in the run folder.
+- **Preview decoding:** the preview re-encodes frames as JPEG. Using `iter_samples` for the preview too would give one decode path.
 - **Class-name check:** the check that the model's class names match `CLASSES` should block the run, not just warn.
-- **Paths:** strip the quotes that *Copy as path* adds in Explorer, and say in the help text that paths are on the machine running Streamlit.
-- **Privacy:** the VIOFO stamp shows the plate and custom text. C2 (masking) is cheap now that each profile knows its stamp region.
+- **Paths:** strip the quotes that *Copy as path* adds in Explorer.
+- **Privacy:** C2 (masking the plate and custom text in saved frames) is cheap now that each layout knows the stamp region.
 
 ## 3. Phases
 
-These match the spec. ⏸ marks a stop for your review.
-
 | Phase | Content | Done when |
 |---|---|---|
-| **0 ⏸** Probe footage | Started from the screenshots (`DASHCAM_NOTES.md`). Still needed: a VIOFO original clip, a VIOFO timelapse clip and a downloaded Garmin clip. ExifTool, Tesseract and OpenCV have to run on your machine; I can write a probe script for you. | The notes cover the three clips; profile defaults confirmed. |
-| **1** Refactor + frames | `export/annotate.py`, `export/inference.py`, `export/settings.py`, `video.iter_samples`, `timebase.py` at speed-up 1, `profiles.py`, FPS selector, hood cut-off, Local file, frame saving, per-stage timing log. | App unchanged at defaults; one JPEG per sampled time; `test_profiles.py` passes. |
-| **2** Jobs + CSV | `jobs.py` and the progress panel; `csv_out.py` with per-video part files; `run.json`. | A running export survives slider changes, page reloads and an open Excel file. |
-| **3 ⏸** Location and time | GPX, embedded GPS (VIOFO built-in, Garmin ExifTool), stamp OCR with the signed format, segment clock with cuts, timelapse clusters, downloaded-footage rules. I suggest committing it in three steps: GPX and clocks, then embedded GPS, then stamp and timelapse. | §11 tests pass; §11.3 checks 2, 3 and 8. |
-| **4** Batch, resume, CLI, merge | Batch folder with a profile per file, resume from parts, CLI, condition map. | §11.3 checks 5–7 and 9 on a folder mixing VIOFO and Garmin. |
-| **5** Docs + extras | README section, `quantity`, EXIF, `tracks/*.gpx`, then accepted proposals and C1–C4. | — |
+| **0 ⏸** Probe footage | Started from the screenshots. Still needed: a VIOFO original clip, a VIOFO timelapse clip and a downloaded Garmin clip. ExifTool, Tesseract and OpenCV run on your machine; I can write the probe script. | Notes cover the three clips. |
+| **1** Refactor + frames | `annotate`, `inference` (with `band_rows` / `drop_below_band`), `settings`, `iter_samples`, `timebase` at speed-up 1, `profiles`, FPS selector, *Measure from*, distance lines, Local file, frame saving, timing log. | App unchanged at defaults apart from the outline and dropped boxes, with PCI unchanged; `test_overlay.py` passes. |
+| **2** Jobs + CSV + speed-ups | `jobs.py` and the progress panel, `csv_out.py` with part files, `run.json`, `prefetch.py`, `detect_tiled_many`. | Export survives setting changes, reloads and an open Excel file; check 12 passes. |
+| **3 ⏸** Location and time | GPX, embedded GPS, stamp OCR on decoded frames, stamp layouts panel, segment clock with cuts, timelapse clusters, downloaded-footage rules. Suggested as three commits. | §11 tests pass; §11.3 checks 2, 3 and 8. |
+| **4** Batch, resume, CLI, merge | Batch folder with profile filter, resume from parts, CLI, condition map. | Checks 5–7, 9 and 11. |
+| **5** Docs + extras | README, `quantity`, EXIF, `tracks/*.gpx`, C1–C4. | — |
 
 ## 4. Questions
 
-1. **Clips for Phase 0.** Can you supply a VIOFO original clip (normal), a VIOFO timelapse clip and one downloaded Garmin clip? Shall I write the probe script that collects everything Phase 0 needs on your machine?
-2. **Proposals.** Which of §2.1 (tile batching, decode thread), §2.2 (OCR in the main loop), §2.4 (stamp region calibration), §2.5 (geometry overlay) and §2.6 (static artefacts) should go into the spec? My recommendation: all except §2.6, which can wait until the detector has run on real VIOFO footage.
+1. **Clips for Phase 0.** Can you supply a VIOFO original clip (normal), a VIOFO timelapse clip and one downloaded Garmin clip? Shall I write the probe script that collects what Phase 0 needs on your machine?
+2. **Start Phase 1?** Phase 1 doesn't depend on Phase 0's results: refactor, frames per second, bonnet exclusion, distance lines, frame saving. It can start now while you gather the clips.
