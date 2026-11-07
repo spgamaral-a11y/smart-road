@@ -66,3 +66,6 @@ DASTUR_KODI.txt
 
 # Deck uchun skrinshotlar — Claude Design'ga qo'lda yuklanadi
 deploy/deck_assets/
+
+# Export runs and probe output: frames and stamp crops can show the licence plate
+Output/

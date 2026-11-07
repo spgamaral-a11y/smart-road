@@ -48,6 +48,16 @@ The screenshots are **not** committed. The VIOFO one shows the licence plate and
 | Other | A hand and a suction mount at the lower left, below the cut-off. Vertical striping across the sky and fields, from compression or scaling; watch whether the detector reads it as cracking. |
 | Source | Downloaded from YouTube, so no camera file name, container clock or embedded GPS survives (spec §8.10). Time and position must come from the stamp. |
 
+## Collecting the rest: `scripts/probe_dashcam.py`
+
+The probe collects everything Phase 0 needs from a clip and writes `Output/probe/phase0_report.md`. Stamp text in the report is masked to the fields the parser reads, so the plate and custom text don't appear in it. Run it on your machine, where the clips, ExifTool and Tesseract are:
+
+```bash
+python scripts/probe_dashcam.py "D:\DCIM\Movie\2025_0315_105644_0012F.MP4" "D:\DCIM\Movie\<timelapse clip>.MP4" "C:\Users\<you>\Downloads\<garmin clip>.mp4"
+```
+
+If ExifTool or Tesseract is missing, it prints the `winget` commands and stops. The `crops/` folders it writes show the plate: keep them local.
+
 ## Still to measure (Phase 0)
 
 1. **VIOFO original clip:** `exiftool -ee3 -api debug=1 -G3 -a -s -GPSType -GPSDateTime -GPSLatitude -GPSLongitude -GPSSpeed`, `exiftool -a -G1 -s -time:all`, the file name, `moov`'s children, and the stamp on 5 frames. From these: the camera's UTC offset, whether mvhd holds local time, and whether stamp time matches GPS time.
