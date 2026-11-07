@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Phase 0 probe for DATA/docs/SPEC_EXPORT_GPS_CSV.md: what a dashcam file really contains.
 
-Run it on your own machine, where the clips, ExifTool and Tesseract are:
+Run it on your own machine, where the clips, ExifTool and Tesseract are. Copy the clips
+into the repository's Input/ folder (or link your footage folder there), then:
 
-    python scripts/probe_dashcam.py CLIP.MP4 [MORE.MP4 ...]
+    python3 scripts/probe_dashcam.py                    every video in Input/, subfolders included
+    python3 scripts/probe_dashcam.py CLIP.MP4 FOLDER    or just these clips and folders
 
 Give it the clips Phase 0 asks for: a VIOFO clip recorded normally, a VIOFO timelapse
 clip, and a Garmin clip downloaded from YouTube. For each one it records what spec §10
@@ -24,7 +26,7 @@ second. It also measures what the spec's estimates assume: decode speed, OCR tim
 read, whether seeking lands on the exact frame, and where the bottom of the image stops
 changing (the bonnet).
 
-Everything goes to Output/probe/ (git ignores Output/):
+Everything goes to Output/probe/ (git keeps only Output/README.md):
 
     phase0_report.md   Send this back. Stamp text is masked to the fields the parser reads,
                        so your plate and custom text don't appear in it.
@@ -68,6 +70,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+#: The dedicated folders (spec §6.0). Environment variables move them, e.g. to a footage drive.
+INPUT_DIR = Path(os.environ.get("SMARTROAD_INPUT") or ROOT / "Input")
+OUTPUT_DIR = Path(os.environ.get("SMARTROAD_OUTPUT") or ROOT / "Output")
+VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v"}
 QT_EPOCH = dt.datetime(1904, 1, 1)
 STAMP_EPOCH = dt.datetime(2000, 1, 1)
 UTC = dt.timezone.utc
@@ -466,6 +472,17 @@ def suggest_stamp_roi(frame) -> tuple[float, float, float, float] | None:
 
 
 # ------------------------------------------------------------------------------ the file
+def list_videos(folder: Path) -> list[Path]:
+    """Every video under `folder`, in any letter case, skipping hidden files and folders.
+    Follows symbolic links, so Input/ can point at a footage drive."""
+    found = []
+    for here, dirs, files in os.walk(folder, followlinks=True):
+        dirs[:] = sorted(d for d in dirs if not d.startswith("."))
+        found += [Path(here) / f for f in sorted(files)
+                  if not f.startswith(".") and Path(f).suffix.lower() in VIDEO_SUFFIXES]
+    return found
+
+
 VIOFO_NAME = re.compile(
     r"(?P<Y>20\d{2})_?(?P<m>\d{2})(?P<d>\d{2})_?(?P<H>\d{2})(?P<M>\d{2})(?P<S>\d{2})"
     r"(?:_(?P<seq>\d{1,6}))?(?P<cam>[FRI])?\.(?:MP4|MOV|TS)$", re.I)
@@ -1455,8 +1472,8 @@ def write_report(results: list[dict], tools: dict, engines: list, out_root: Path
 # ------------------------------------------------------------------------------ main
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("clips", nargs="+", help="video files (MP4/MOV)")
-    ap.add_argument("--out", default=str(ROOT / "Output" / "probe"), help="output folder (default: Output/probe)")
+    ap.add_argument("clips", nargs="*", help=f"video files or folders (default: everything in {INPUT_DIR})")
+    ap.add_argument("--out", default=str(OUTPUT_DIR / "probe"), help=f"output folder (default: {OUTPUT_DIR / 'probe'})")
     ap.add_argument("--exiftool", help="path to exiftool, if it isn't found")
     ap.add_argument("--tesseract", help="path to tesseract, if it isn't found")
     ap.add_argument("--no-rapidocr", action="store_true", help="don't use RapidOCR even if installed")
@@ -1502,18 +1519,26 @@ def main() -> int:
         except Exception:
             print("RapidOCR not installed (optional): pip install rapidocr_onnxruntime")
 
-    out_root = Path(args.out)
+    clips, seen = [], set()
+    for raw in args.clips or [str(INPUT_DIR)]:
+        target = Path(raw.strip().strip('"')).expanduser()
+        found = list_videos(target) if target.is_dir() else [target] if target.is_file() else []
+        if not found:
+            print(f"No videos in {target}" if target.is_dir() else f"Not found: {target}")
+        for path in found:
+            if path.resolve() not in seen:
+                seen.add(path.resolve())
+                clips.append(path)
+    if not clips:
+        print(f"Nothing to probe. Copy the clips into {INPUT_DIR}, or give their paths.")
+        return 1
+    out_root = Path(args.out).expanduser()
     out_root.mkdir(parents=True, exist_ok=True)
+    print(f"{len(clips)} clip(s); results go to {out_root}")
     results = []
-    for raw in args.clips:
-        path = Path(raw.strip().strip('"'))
-        if not path.is_file():
-            print(f"Not a file: {path}")
-            continue
+    for path in clips:
         print(f"{path.name}:", flush=True)
         results.append(probe_clip(path, args, tools, engines, out_root))
-    if not results:
-        return 1
     report = write_report(results, tools, engines, out_root, args)
     print(f"\nReport: {report}\nSend phase0_report.md back. The crops/ folders show your plate: keep them local.")
     return 0

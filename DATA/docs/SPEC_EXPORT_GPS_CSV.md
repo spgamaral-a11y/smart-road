@@ -1,7 +1,13 @@
 # Smart Road: frame export, CSV export and GPS/time tagging
 
 **Spec for Claude Code (VS Code).** Target repo: `spgamaral-a11y/smart-road` at commit `af57388`.
-Version 1.5, 2026-11-07. Suggested location in the repo: `DATA/docs/SPEC_EXPORT_GPS_CSV.md`.
+Version 1.6, 2026-11-07. Suggested location in the repo: `DATA/docs/SPEC_EXPORT_GPS_CSV.md`.
+
+**Changes in 1.6: dedicated Input and Output folders** (§6.0)
+
+- **`Input/` and `Output/`** sit at the root of the repository. Git keeps only their READMEs: clips, frames and stamp crops show the licence plate and the route.
+- **Defaults.** The app offers the videos in `Input/` under *Local file*, uses `Input/` as the default *Batch folder*, and writes runs to `Output/`. The CLI and the Phase 0 probe use the same defaults. `SMARTROAD_INPUT` and `SMARTROAD_OUTPUT` move them, for example to a footage drive.
+- **One copy.** `smartroad/export/paths.py` holds the two folders and `list_videos()`, which finds `.mp4`, `.mov` and `.m4v` in any letter case and follows symbolic links.
 
 **Changes in 1.5: camera settings, stamp layouts, speed-ups**
 
@@ -229,10 +235,10 @@ Everything camera-specific is a default, never a hard-coded assumption.
 
 - `Input` becomes `Photograph | Drive video | Batch folder`. Hide **Batch folder** and **Local file** when the `SPACE_ID` environment variable is set (Hugging Face).
 - In Drive video mode, `Source` becomes `Sample | Upload | Local file`.
-  - **Local file** is `st.text_input("Video file path")`. Check that the file exists and that its suffix is .mp4, .mov or .m4v, in any case.
+  - **Local file** is a `st.selectbox` of the videos in the Input folder (§6.0), listed by `list_videos()` with their paths relative to it, plus `st.text_input("Video file path")` for a file anywhere else. Typing a path overrides the selection. Check that the file exists and that its suffix is .mp4, .mov or .m4v, in any case. When the Input folder holds no videos, the selectbox says so and points to `Input/README.md`.
   - The preview of a local file is cached on `(path, size, mtime, settings)`, never on the file's bytes.
 - Batch folder mode has these inputs:
-  - **Folder**: a text input.
+  - **Folder**: a text input, defaulting to the Input folder (§6.0).
   - **Include subfolders**: on by default.
   - **File pattern**: default `*.mp4;*.mov`, case-insensitive.
   - **Front camera only**: on by default. It keeps names whose stem ends in `F`, and is ignored when no name ends in F, R or I. It applies only to files whose profile names files by camera (`camera_letters`, §8.9): VIOFO does, Garmin doesn't.
@@ -274,7 +280,7 @@ Everything camera-specific is a default, never a hard-coded assumption.
 
 | Widget | Default | Notes |
 |---|---|---|
-| Output folder | `<repo>/Output` | Text input. Created on the first run. Add `Output/` to `.gitignore`. |
+| Output folder | the Output folder (§6.0) | Text input. Created on the first run if it is missing. Git keeps only its README. |
 | Run label | empty | Converted to a slug and added to the end of the run folder name. |
 | Frames per video | All | `All`, or `Limit` plus a number, for quick tests. |
 | Save graded frames | on | |
@@ -302,7 +308,7 @@ Everything camera-specific is a default, never a hard-coded assumption.
 | Fine time offset (s) | 0.0 | Added to the resolved video clock. |
 | Max gap to interpolate (s) | 5 | Beyond this, the location is left blank and `gps_quality` is `gap`. |
 | ▸ Embedded GPS | From profile | Backend: `From profile`, `Auto (built-in, then ExifTool)`, `Built-in only`, or `ExifTool only`. `From profile` means built-in then ExifTool for VIOFO, and ExifTool only for Garmin (§8.9). The ExifTool path is found with `shutil.which("exiftool")` and can also be typed in. |
-| ▸ GPX | — | A `st.file_uploader(type="gpx", accept_multiple_files=True)` **and** a text box for the path to a .gpx file or a folder of them. Merge both. |
+| ▸ GPX | — | A `st.file_uploader(type="gpx", accept_multiple_files=True)` **and** a text box for the path to a .gpx file or a folder of them, with `Input/gpx` as its placeholder (the README suggests keeping tracks there). Merge both. |
 | ▸ On-screen stamp | Auto | See the list below this table. |
 | Container clock is local time | From profile | `From profile`, `On` or `Off`. Many dashcams write local time into mvhd, which the MP4 format reserves for UTC. Phase 0 confirms the value for each profile (§8.9). |
 | Manual start | — | A local date and time. Shown only for Manual. |
@@ -383,6 +389,23 @@ Sample and Upload sources are written to a temporary file first, as today, and d
 - **Missing values.** Never write 0,0 coordinates or placeholder dates. A missing value is an empty cell.
 
 ## 6. Output layout
+
+### 6.0 Input and Output folders
+
+```
+<repo>/
+├── Input/             footage in: clips and GPX tracks (README.md suggests viofo/, viofo-timelapse/, garmin/, gpx/)
+│   └── README.md
+└── Output/            results out: export runs (§6.1) and probe/ (Phase 0)
+    └── README.md
+```
+
+- **Git keeps only the two READMEs.** `.gitignore` has `Input/*`, `Output/*` and exceptions for the READMEs, plus `*.MP4`, `*.M4V` and `*.m4v`: VIOFO writes upper-case extensions, which `*.mp4` doesn't match on Linux.
+- **One copy of the paths** (`smartroad/export/paths.py`):
+  - `INPUT_DIR` is `$SMARTROAD_INPUT` if set, otherwise `<repo>/Input`; `OUTPUT_DIR` is `$SMARTROAD_OUTPUT` if set, otherwise `<repo>/Output`. `<repo>` is found from the package's own location, not the working directory.
+  - `list_videos(folder, *, recursive=True, pattern="*.mp4;*.mov;*.m4v")` returns the videos in any letter case, sorted, skipping hidden files and folders. It follows symbolic links, so `Input/viofo` can point at a footage drive.
+- **Who uses them.** The app's *Local file* list and *Batch folder* default (§5.1), its *Output folder* default (§5.3), the CLI's `--input` and `--out` defaults (§9.4), and `scripts/probe_dashcam.py`, which keeps its own copy because Phase 0 changes nothing in `smartroad/`.
+- **Hugging Face.** With `SPACE_ID` set, *Local file* and *Batch folder* are hidden (§5.1), so the Input folder isn't used there. Runs still go to `OUTPUT_DIR`.
 
 ### 6.1 Folders and names
 
@@ -1053,6 +1076,7 @@ New package `smartroad/export/`:
 | File | Contents |
 |---|---|
 | `settings.py` | `ExportSettings` and its sub-dataclasses, with `to_dict()` and `from_dict()` for JSON |
+| `paths.py` | `INPUT_DIR`, `OUTPUT_DIR` and `list_videos()` (§6.0) |
 | `inference.py` | `make_detector(model, *, conf, tiled, overlap, top, device)`, which also accepts a list of frames for `detect_tiled_many` (§9.5); `make_grader(*, height_m, focal_35, horizon, near_m, far_m, severity, top, class_names)`; `band_rows(width, height, *, height_m, focal_35, horizon, near_m, far_m) -> (row_far, row_near)` and `drop_below_band(dets, row_near)` (§5.2), the one copy of the bonnet exclusion. This logic moves out of `app.py`'s `_detect` and `grade` **with no change in behaviour**, and `app.py` calls these instead. |
 | `annotate.py` | `COLOURS`, `PRETTY` and `draw()`, moved out of `app.py` (which imports them back), plus `add_footer()` and `draw_distance_lines(image, camera, *, near_m, far_m, lane_m)` (§5.2) |
 | `prefetch.py` | `prefetch(items, *, size, should_stop)`: the decode-ahead thread and its bounded queue (§9.5) |
@@ -1170,12 +1194,15 @@ The export decodes frames in memory. The preview saves each frame as a JPEG at q
 ### 9.4 CLI (S1)
 
 ```
-python -m smartroad.export run   --input D:\DCIM\Movie --recursive --front-only --label benguela ^
-                                 --settings Output\20261106-193012_benguela\run.json
-python -m smartroad.export run   --input clip.MP4 --fps 1 --gps embedded --tz 1 --out Output
-python -m smartroad.export gps   clip.MP4 --gps overlay --gpx-out clip.gpx     # location only, no detection
-python -m smartroad.export merge Output --out Output\_merged                   # latest run wins per video_id
+python3 -m smartroad.export run   --label benguela                          # every video in Input/, run in Output/
+python3 -m smartroad.export run   --input Input/viofo --front-only --label benguela \
+                                  --settings Output/20261106-193012_benguela/run.json
+python3 -m smartroad.export run   --input clip.MP4 --fps 1 --gps embedded --tz 1
+python3 -m smartroad.export gps   clip.MP4 --gps overlay --gpx-out clip.gpx       # location only, no detection
+python3 -m smartroad.export merge Output --out Output/_merged                     # latest run wins per video_id
 ```
+
+`--input` defaults to the Input folder and `--out` to the Output folder (§6.0). A folder given to `--input` is read with its subfolders.
 
 `merge` joins the CSVs from every run folder. For each `video_id`, it keeps only the rows from the most recent run that finished that video, so results made with different settings are never mixed within one video.
 
@@ -1232,6 +1259,7 @@ Write the sampler against `TimeBase` (A.8) from the start, with speed-up 1. Phas
 - Add `export/annotate.py`, `export/inference.py`, `export/settings.py`, `export/frames_out.py` and `video.iter_samples`.
 - Add `survey/profiles.py` with the registry, `probe_container()`, `resolve_profile()` and both profiles, using container evidence only in this phase.
 - Add *Measure from*, `band_rows()` / `drop_below_band()` and the distance lines (§5.2).
+- Add `export/paths.py` and the *Local file* list of the Input folder's videos (§5.1, §6.0).
 - Add a minimal `pipeline.process_video` that only saves frames.
 - Add the Run export button.
 
@@ -1303,6 +1331,7 @@ These must pass in CI's light environment, or skip with a reason.
 | `test_profiles.py` | **Registry:** both profiles registered, keys unique, the sidebar options equal the registry. **Detection:** a synthetic MP4 with a `gps ` box is VIOFO; `2025_0315_105644_0012F.MP4` is VIOFO by name; `GRMN0007.MP4` is Garmin; an unknown file falls back with a warning. **Declared:** a declared Garmin profile on a file with a `gps ` box is kept and warned. **Overrides:** an explicit setting beats the profile; `From profile` takes the profile's value. **Extension:** registering a test profile makes it detectable with no other change. **Stamp tokens:** with a fake `read_stamp` returning the Garmin sample text, a file with no container evidence is Garmin, `reencoded=True`; `V1OFO` text is VIOFO; no token falls back. **Layouts:** with two layouts, the one whose parse gives date, time and position wins, and ties go to the built-in one; a layout saved to a temporary `profiles.json` is registered again after reloading; a built-in layout can't be deleted. |
 | `test_jobs.py` | A job runs a fake pipeline on a thread and writes `progress.json`; Stop ends it after the current frame and no part files are written for the unfinished video; a second submit to the same output folder is refused; the registry's state is unchanged by a simulated rerun. |
 | `test_settings.py` | `ExportSettings()` defaults equal the `app.py` sidebar defaults. The JSON round trip. |
+| `test_paths.py` | `list_videos()` finds `.MP4`, `.mov` and `.m4v` in any letter case, in subfolders, sorted; skips hidden files and folders; follows a symbolic link to a folder. `SMARTROAD_INPUT` and `SMARTROAD_OUTPUT` override the defaults, and the defaults are `Input/` and `Output/` at the repository root whatever the working directory. |
 | `test_tiled.py` (extend) | `detect_tiled_many` with the `MarkFinder` fake model gives, for each of 3 frames, exactly `detect_tiled`'s result, and every `predict` call receives tiles of one shape. `drop_below_band` drops a box whose top edge is below the row and keeps one that straddles it; `pci_from_detections` gives the same PCI with and without it. |
 | `test_prefetch.py` | Yields the source's items in order; re-raises a producer exception at the right item; with `should_stop`, ends without hanging and joins its thread; `size=0` runs inline. |
 | `test_overlay.py` | Each distance line is drawn at `Camera.row_at_distance(z)` (±1 px), and its ticks are `lane_m / lateral_m_per_px(row)` apart (±1 px). With the lines off, the image is byte-identical to `draw()`'s. *Measure from* at or above *Measure out to* raises the camera model's `ValueError`, shown as a message. |
@@ -1408,6 +1437,7 @@ The default is used until each question is answered.
 11. **Background exports.** Answered 2026-11-07: yes, exports run in the background (§5.7).
 12. **Camera settings.** Answered 2026-11-07: user-set in the sidebar as in the original GUI, with the bonnet exclusion calculated from them (§5.2). Profiles carry no camera settings.
 13. **Speed-ups, stamp reads, stamp layouts, distance lines.** Answered 2026-11-07: add all four (M15–M18).
+14. **Input and Output folders.** Answered 2026-11-07: dedicated `Input/` and `Output/` folders at the repository root (§6.0).
 
 ## 13. Known limitations
 

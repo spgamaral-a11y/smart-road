@@ -67,5 +67,14 @@ DASTUR_KODI.txt
 # Deck uchun skrinshotlar — Claude Design'ga qo'lda yuklanadi
 deploy/deck_assets/
 
-# Export runs and probe output: frames and stamp crops can show the licence plate
-Output/
+# Footage in, results out: git keeps only the two READMEs. Clips, frames and stamp
+# crops show the licence plate and the route, so they never belong in the repository.
+Input/*
+!Input/README.md
+Output/*
+!Output/README.md
+
+# VIOFO writes upper-case extensions, which *.mp4 doesn't match on Linux
+*.MP4
+*.M4V
+*.m4v

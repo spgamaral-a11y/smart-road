@@ -56,11 +56,13 @@ The probe collects everything Phase 0 needs from a clip and writes `Output/probe
 sudo apt install tesseract-ocr libimage-exiftool-perl
 ```
 
-Then, from the repository folder, with the clips' paths:
+Then copy the clips into the repository's `Input/` folder (subfolders are fine, see `Input/README.md`) and, from the repository folder:
 
 ```bash
-python3 scripts/probe_dashcam.py ~/Videos/20250313075907_000570R.MP4 ~/Videos/<front clip>F.MP4 "$HOME/Videos/Day 5, Lubango, Angola to Porto Amboim, Angola. Last day of travel.mp4"
+python3 scripts/probe_dashcam.py
 ```
+
+With no arguments it probes every video in `Input/`. Clips elsewhere can be given as paths or folders instead.
 
 It needs Python with `opencv-python` (or `opencv-python-headless`) and `numpy`, as the app does; `pip install rapidocr_onnxruntime` adds a second OCR engine. If ExifTool or Tesseract is missing, it prints the install commands and stops. The `crops/` folders it writes show the plate: keep them local.
 
