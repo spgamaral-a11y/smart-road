@@ -58,6 +58,17 @@ python scripts/probe_dashcam.py "D:\DCIM\Movie\2025_0315_105644_0012F.MP4" "D:\D
 
 If ExifTool or Tesseract is missing, it prints the `winget` commands and stops. The `crops/` folders it writes show the plate: keep them local.
 
+## Clips received (2026-11-07)
+
+Shared in a private Google Drive folder. They can't be fetched into a cloud session: the files are private, Google's download host is outside the session's network, and the Drive connector stops at 10 MB. So the probe runs on your machine.
+
+| File | Size | What it is |
+|---|---|---|
+| `20250313075907_000570R.MP4` | 142 MB | VIOFO, newer-firmware name (spec A.5): local start 2025-03-13 07:59:07, sequence 570, **rear** camera (`R`) |
+| `Day 5, Lubango, Angola to Porto Amboim, Angola. Last day of travel.mp4` | 246 MB | A YouTube download, probably the Garmin footage (an overland trip; the Garmin screenshot was in South Africa) |
+
+Still missing: a VIOFO **front** clip (`…F.MP4`, the 2560×1600 camera the spec targets) and a VIOFO timelapse clip.
+
 ## Still to measure (Phase 0)
 
 1. **VIOFO original clip:** `exiftool -ee3 -api debug=1 -G3 -a -s -GPSType -GPSDateTime -GPSLatitude -GPSLongitude -GPSSpeed`, `exiftool -a -G1 -s -time:all`, the file name, `moov`'s children, and the stamp on 5 frames. From these: the camera's UTC offset, whether mvhd holds local time, and whether stamp time matches GPS time.

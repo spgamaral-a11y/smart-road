@@ -1217,6 +1217,8 @@ From these, work out:
 
 If ExifTool or Tesseract is missing, give me the `winget` commands from §5.4 and stop.
 
+`scripts/probe_dashcam.py` collects all of the above per clip and works out the answers below, writing `Output/probe/phase0_report.md` with the stamp text masked (see `DASHCAM_NOTES.md`).
+
 **Done when** the notes are committed and the defaults in §5.4 and both profiles in §8.9 are confirmed or corrected.
 
 ### Phase 1: refactor, frames per second, bonnet exclusion, distance lines, frame saving

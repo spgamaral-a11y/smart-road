@@ -83,7 +83,7 @@ The VIOFO windscreen reflection sits over the middle of the lane, inside the mea
 
 | Phase | Content | Done when |
 |---|---|---|
-| **0 ⏸** Probe footage | Started from the screenshots. Still needed: a VIOFO original clip, a VIOFO timelapse clip and a downloaded Garmin clip. ExifTool, Tesseract and OpenCV run on your machine; I can write the probe script. | Notes cover the three clips. |
+| **0 ⏸** Probe footage | Started from the screenshots. `scripts/probe_dashcam.py` is ready and tested on synthetic VIOFO (normal and timelapse) and Garmin clips. Clips received: a VIOFO **rear** clip and the YouTube download. Still needed: a VIOFO **front** clip and a timelapse clip. | `phase0_report.md` for the clips; notes and profiles updated. |
 | **1** Refactor + frames | `annotate`, `inference` (with `band_rows` / `drop_below_band`), `settings`, `iter_samples`, `timebase` at speed-up 1, `profiles`, FPS selector, *Measure from*, distance lines, Local file, frame saving, timing log. | App unchanged at defaults apart from the outline and dropped boxes, with PCI unchanged; `test_overlay.py` passes. |
 | **2** Jobs + CSV + speed-ups | `jobs.py` and the progress panel, `csv_out.py` with part files, `run.json`, `prefetch.py`, `detect_tiled_many`. | Export survives setting changes, reloads and an open Excel file; check 12 passes. |
 | **3 ⏸** Location and time | GPX, embedded GPS, stamp OCR on decoded frames, stamp layouts panel, segment clock with cuts, timelapse clusters, downloaded-footage rules. Suggested as three commits. | §11 tests pass; §11.3 checks 2, 3 and 8. |
@@ -92,5 +92,5 @@ The VIOFO windscreen reflection sits over the middle of the lane, inside the mea
 
 ## 4. Questions
 
-1. **Clips for Phase 0.** Can you supply a VIOFO original clip (normal), a VIOFO timelapse clip and one downloaded Garmin clip? Shall I write the probe script that collects what Phase 0 needs on your machine?
-2. **Start Phase 1?** Phase 1 doesn't depend on Phase 0's results: refactor, frames per second, bonnet exclusion, distance lines, frame saving. It can start now while you gather the clips.
+1. **Run the probe on your clips.** The two clips on Drive can't be fetched into this session (private files, a blocked download host, and a 10 MB limit on the Drive connector). Run `scripts/probe_dashcam.py` on them, plus a VIOFO front clip and a timelapse clip if you have them, and put `Output/probe/phase0_report.md` in the same Drive folder: the connector can read a file that small.
+2. **Start Phase 1?** Phase 1 doesn't depend on Phase 0's results: refactor, frames per second, bonnet exclusion, distance lines, frame saving. It can start now.
