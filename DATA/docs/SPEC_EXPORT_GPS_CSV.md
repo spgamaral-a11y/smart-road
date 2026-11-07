@@ -1,7 +1,15 @@
 # Smart Road: frame export, CSV export and GPS/time tagging
 
 **Spec for Claude Code (VS Code).** Target repo: `spgamaral-a11y/smart-road` at commit `af57388`.
-Version 1.2, 2026-11-06. Suggested location in the repo: `DATA/docs/SPEC_EXPORT_GPS_CSV.md`.
+Version 1.3, 2026-11-07. Suggested location in the repo: `DATA/docs/SPEC_EXPORT_GPS_CSV.md`.
+
+**Changes in 1.3: source profiles** (§8.9)
+
+- **Profiles.** Everything that depends on the camera make now lives in a `SourceProfile`: file-name formats, the container-clock rule, the embedded GPS reader, whether embedded GPS time is a real clock, the stamp region, date order, timelapse capture rates and a camera-geometry preset.
+- **Two profiles, VIOFO and Garmin.** Each video's profile is detected from its file name and container, with no subprocess. A new *Source profile* setting (`Auto` / `VIOFO` / `Garmin`) overrides detection, but detection still runs and warns on a contradiction, as for Recording mode.
+- **A registry for later makes.** Profiles are registered in `smartroad/survey/profiles.py`. The GUI lists the registry, so adding a make later means adding a profile (and, if needed, a GPS reader), not changing the pipeline or the CSV schema. Phone footage is out of scope for now.
+- **New columns.** `videos.csv` gains `source_profile`, `profile_source`, `camera_height_m`, `focal_35mm`, `horizon` and `hood_cutoff`.
+- **Settings.** *Container clock is local time*, the stamp region and the embedded GPS backend now default to `From profile`. A new *Camera geometry for export* setting chooses between the sidebar values (default, as before) and each video's profile preset.
 
 **Changes in 1.2: timelapse video** (§8.8)
 
@@ -128,6 +136,7 @@ Everything camera-specific is a default, never a hard-coded assumption.
 | Time and date, from the same three sources | Selectable: Auto (follows the GPS source), Embedded GPS clock, On-screen stamp, File name, Container (mvhd), or Manual. |
 | Batches whose results can be searched and analysed | A new input mode, **Batch folder**. Runs can be resumed, and each video gets a stable `video_id`. A CLI and a merge tool reuse the same pipeline. |
 | Timelapse video (1 frame per second) must work too | Each video gets a time base. Driving time (`elapsed_s`) drives every clock and position calculation, and frames are sampled by driving time. The recording mode is detected per video; the user setting is an override that is still checked (§8.8). |
+| Footage from more than one dashcam make: VIOFO and Garmin now, others later | Each video gets a source profile, detected from its file name and container, with a sidebar override that is still checked. The profile holds everything make-specific, so adding a make later means adding a profile, not changing the pipeline (§8.9). |
 
 ## 4. Scope
 
@@ -153,6 +162,10 @@ Everything camera-specific is a default, never a hard-coded assumption.
   - frames sampled by driving time;
   - automatic detection of the recording mode, with the user setting as an override that is still checked;
   - the stamp read on every frame.
+- **M12** Source profiles (§8.9):
+  - a `SourceProfile` registry, with a VIOFO and a Garmin profile;
+  - per-video detection, with the user setting as an override that is still checked;
+  - the profile and the camera geometry used are recorded per video in `videos.csv`.
 
 **SHOULD**
 
@@ -177,6 +190,7 @@ Everything camera-specific is a default, never a hard-coded assumption.
 - Map-matching to a road network.
 - Lens undistortion.
 - Batch mode on the Hugging Face Space.
+- Phone footage (iPhone, Android). It would be added later as a new profile in the registry (§8.9).
 
 ## 5. GUI
 
@@ -190,7 +204,7 @@ Everything camera-specific is a default, never a hard-coded assumption.
   - **Folder**: a text input.
   - **Include subfolders**: on by default.
   - **File pattern**: default `*.mp4;*.mov`, case-insensitive.
-  - **Front camera only**: on by default. It keeps names whose stem ends in `F`, and is ignored when no name ends in F, R or I.
+  - **Front camera only**: on by default. It keeps names whose stem ends in `F`, and is ignored when no name ends in F, R or I. It applies only to files whose profile names files by camera (`camera_letters`, §8.9): VIOFO does, Garmin doesn't.
   - **Scan**: a button that shows a table with each file's name, size (MB), duration (s), start time (from the file name), and whether it is already done in the selected run.
 
 ### 5.2 Sampling and search region (sidebar)
@@ -240,24 +254,27 @@ Everything camera-specific is a default, never a hard-coded assumption.
 
 | Widget | Default | Notes |
 |---|---|---|
+| Source profile | Auto | `Auto (per file)`, or one of the registered profiles: `VIOFO`, `Garmin`. Help text: "Auto recognises each file's make. Choose one only if detection gets a file wrong." Rules in §8.9. |
+| If not recognised | VIOFO | The profile used, with a warning, when Auto recognises no registered make. |
+| Camera geometry for export | Sidebar values | `Sidebar values` uses the Camera geometry and hood cut-off sliders for every video, as before. `From profile (per video)` uses each video's profile preset, for batches that mix makes (§8.9). The preview always uses the sidebar values. |
 | GPS source | None | `None`, `Embedded in video`, `GPX file(s)`, or `On-screen stamp (OCR)`. |
 | Date & time source | Auto | `Auto`, `Embedded GPS clock`, `On-screen stamp (OCR)`, `File name`, `Container (mvhd)`, or `Manual`. Rules in §8.5. |
 | Camera clock UTC offset at start (h) | +1.0 | From −12 to +14, in steps of 0.25. Help text: "Stamps and file names use the camera's local time. Angola (WAT) is UTC+1 with no daylight saving." Used only when the offset can't be measured or carried over from the previous video (§8.7). |
 | Local time columns | Camera's clock | `Camera's clock` means what the camera showed, with the offset per row. `Fixed UTC offset` plus a number gives every row the same zone, for a report in one zone (§8.7). |
 | Fine time offset (s) | 0.0 | Added to the resolved video clock. |
 | Max gap to interpolate (s) | 5 | Beyond this, the location is left blank and `gps_quality` is `gap`. |
-| ▸ Embedded GPS | Auto | Backend: `Auto (built-in, then ExifTool)`, `Built-in only`, or `ExifTool only`. The ExifTool path is found with `shutil.which("exiftool")` and can also be typed in. |
+| ▸ Embedded GPS | From profile | Backend: `From profile`, `Auto (built-in, then ExifTool)`, `Built-in only`, or `ExifTool only`. `From profile` means built-in then ExifTool for VIOFO, and ExifTool only for Garmin (§8.9). The ExifTool path is found with `shutil.which("exiftool")` and can also be typed in. |
 | ▸ GPX | — | A `st.file_uploader(type="gpx", accept_multiple_files=True)` **and** a text box for the path to a .gpx file or a folder of them. Merge both. |
 | ▸ On-screen stamp | Auto | See the list below this table. |
-| Container clock is local time | on | Many dashcams write local time into mvhd, which the MP4 format reserves for UTC. |
+| Container clock is local time | From profile | `From profile`, `On` or `Off`. Many dashcams write local time into mvhd, which the MP4 format reserves for UTC. Phase 0 confirms the value for each profile (§8.9). |
 | Manual start | — | A local date and time. Shown only for Manual. |
 
 The ▸ On-screen stamp expander contains:
 
 - **Engine:** `Auto`, `Tesseract` or `RapidOCR`.
 - **Tesseract path:** found automatically, first on the PATH, then at `C:\Program Files\Tesseract-OCR\tesseract.exe`.
-- **Stamp region:** `x0 0.0, y0 0.955, x1 1.0, y1 1.0`, as fractions of the frame.
-- **Date order:** `Auto` (default), `DMY` or `MDY`. Year-first dates are always detected. The rules for Auto are in §8.4.
+- **Stamp region:** `From profile` (default) or four custom fractions `x0, y0, x1, y1`. VIOFO's region is `0.0, 0.955, 1.0, 1.0` (§8.9).
+- **Date order:** `Auto` (default; starts from the profile's order), `DMY` or `MDY`. Year-first dates are always detected. The rules for Auto are in §8.4.
 - **Read every:** 1.0 s.
 - **Read each frame's stamp when the clock can't be fitted:** on (§8.4).
 
@@ -468,11 +485,14 @@ At startup, check that the model's `names[0..7]` match `CLASSES`, and warn if th
 
 ### 7.4 `videos.csv`: one row per video
 
-`run_id, video_id, video_file, video_relpath, camera, status, error, warnings, duration_s, fps, width, height, recording_mode, speedup, capture_fps, mode_source, driving_duration_s, frames_graded, detections, mean_pci, min_pci, min_pci_time_s, start_utc, end_utc, start_local, utc_offset_start, utc_offset_end, time_source, clock_events, date_order, gps_source, gps_backend, gps_fixes, gps_coverage_pct, processing_s, frames_per_min`
+`run_id, video_id, video_file, video_relpath, camera, source_profile, profile_source, camera_height_m, focal_35mm, horizon, hood_cutoff, status, error, warnings, duration_s, fps, width, height, recording_mode, speedup, capture_fps, mode_source, driving_duration_s, frames_graded, detections, mean_pci, min_pci, min_pci_time_s, start_utc, end_utc, start_local, utc_offset_start, utc_offset_end, time_source, clock_events, date_order, gps_source, gps_backend, gps_fixes, gps_coverage_pct, processing_s, frames_per_min`
 
 | Column | Values |
 |---|---|
 | `status` | `done`, `failed` or `skipped` |
+| `source_profile` | The profile key, `viofo` or `garmin` (§8.9) |
+| `profile_source` | `detected`, `declared` or `fallback`. A declared profile that detection contradicts, or a fallback, also writes a warning. |
+| `camera_height_m`, `focal_35mm`, `horizon`, `hood_cutoff` | The camera geometry actually used to grade this video: the sidebar values or the profile preset |
 | `gps_backend` | `builtin`, `exiftool`, `gpx`, `ocr-tesseract`, `ocr-rapidocr`, or empty |
 | `gps_coverage_pct` | % of graded frames that have lat/lon |
 | `recording_mode` | `normal` or `timelapse` (§8.8) |
@@ -684,7 +704,7 @@ Record `per-frame stamp for N frames` in `clock_events`. Accepted readings need 
 | Embedded GPS clock | §8.2 alignment | `embedded` |
 | On-screen stamp | The §8.4 segment clock. Frames it doesn't cover use the per-frame stamp fallback. Then local → UTC with each segment's zone (§8.7). | `overlay` or `overlay-frame` |
 | File name | The VIOFO file-name regex (A.5) gives the local start time, then local → UTC | `filename` |
-| Container (mvhd) | `video_start_time()`. If *Container clock is local time* is on, treat the value as local, then local → UTC | `container` |
+| Container (mvhd) | `video_start_time()`. If *Container clock is local time* is on (by default, the profile's value, §8.9), treat the value as local, then local → UTC | `container` |
 | Manual | The date and time typed by the user (local), then local → UTC | `manual` |
 | **Auto** | Depends on the GPS source; see below | whichever was used |
 
@@ -804,6 +824,96 @@ The mode is decided **per video**, so one folder can mix files recorded while dr
 - `video_time_s` and the frame file names still use the time within the file.
 - Two new columns, `elapsed_s` and `frame_number`, give the driving time and the exact frame.
 
+### 8.9 Source profiles
+
+**Why.** Every rule above that depends on the camera make (the file-name format, whether mvhd holds local time, which embedded GPS reader works, whether embedded GPS time is a real clock, where the stamp is, the date order, the timelapse capture rates, the hood) lives in one place, a `SourceProfile`. The pipeline asks the video's profile instead of testing for a make. Two profiles ship now, VIOFO and Garmin. More makes are added later as more profiles.
+
+**Interface** (`smartroad/survey/profiles.py`):
+
+```python
+@dataclass(frozen=True)
+class CameraPreset:
+    height_m: float = 1.70
+    focal_35: float = 25.0
+    horizon: float = 0.139
+    hood_cutoff: float = 1.0
+    calibrated: bool = False            # True only after a lens and mount calibration for this make
+
+
+@dataclass(frozen=True)
+class ContainerProbe:
+    """What can be read without decoding video or starting a subprocess."""
+    name: str                           # file name
+    moov_children: tuple[str, ...]      # e.g. ("mvhd", "trak", "trak", "udta", "gps ")
+    handlers: tuple[str, ...]           # track handler types, e.g. ("vide", "soun", "meta")
+    strings: dict[str, str]             # make/model/encoder strings found in udta or meta, if any
+
+
+@dataclass(frozen=True)
+class SourceProfile:
+    key: str                                        # stable id written to videos.csv: "viofo", "garmin"
+    label: str                                      # shown in the sidebar
+    detect: Callable[[ContainerProbe], str | None]  # evidence text if the file is this make, else None
+    filename_patterns: tuple[re.Pattern, ...]       # names that carry a local start time (A.5)
+    camera_letters: bool                            # names end in F/R/I, so "Front camera only" applies
+    container_clock_local: bool                     # mvhd holds camera local time (§8.5)
+    embedded_gps: str | None                        # key into GPS_READERS: "novatek", "exiftool", or None
+    gpsdatetime_is_clock: bool                      # False when GPSDateTime is CreateDate + SampleTime (§8.2)
+    stamp_roi: tuple[float, float, float, float] | None   # fractions of the frame; None = no stamp expected
+    date_order: str                                 # "Auto", "DMY" or "MDY"
+    capture_rates: tuple[int, ...]                  # timelapse capture rates to snap to (§8.8)
+    camera: CameraPreset
+
+
+@dataclass(frozen=True)
+class ProfileMatch:
+    profile: SourceProfile
+    source: str                         # "detected" | "declared" | "fallback"
+    evidence: str
+    warnings: tuple[str, ...]
+
+
+PROFILES: dict[str, SourceProfile] = {}             # the registry, in registration order
+
+def register(profile: SourceProfile) -> SourceProfile: ...
+def probe_container(path: Path) -> ContainerProbe: ...      # in-process struct parsing, like video_start_time()
+def resolve_profile(path: Path, *, declared: str = "auto", fallback: str = "viofo") -> ProfileMatch: ...
+```
+
+`GPS_READERS` in `geo.py` maps a reader key to a function `(path, info, timebase) -> fixes`. `novatek` is the built-in decoder with ExifTool as its fallback (§8.2). `exiftool` is the ExifTool backend alone. The *Embedded GPS* backend setting (§5.4) overrides the profile's reader.
+
+**The two profiles**
+
+| Field | VIOFO | Garmin |
+|---|---|---|
+| `detect` evidence | A Novatek `gps ` box among `moov`'s children, or a file name matching `VIOFO_NAME` (A.5) | A `GRMN\d{4}` file name, or a Garmin make string in the container. Phase 0 records which atoms real Garmin files carry. |
+| `filename_patterns` | `VIOFO_NAME` | None. `GRMN0007.MP4` carries no time. |
+| `camera_letters` | Yes | No |
+| `container_clock_local` | True. Phase 0 confirms it. | True until Phase 0 measures it. When a second clock exists, the 5 s comparison in §8.5 warns if this is wrong. |
+| `embedded_gps` | `novatek` | `exiftool` (timed metadata track, placed by `SampleTime`) |
+| `gpsdatetime_is_clock` | True (receiver UTC) | False (§8.2) |
+| `stamp_roi` | `(0.0, 0.955, 1.0, 1.0)` | Provisional `(0.0, 0.93, 1.0, 1.0)`. Phase 0 sets it from a real clip; the layout differs between Garmin models. |
+| `date_order` | `Auto` (DMY on the sample frame) | `Auto` |
+| `capture_rates` | `(1, 2, 3, 5, 10)` | `(1, 2, 3, 5, 10, 15)` until Phase 0 measures Travelapse |
+| `camera` | The sidebar defaults with `hood_cutoff` 0.80, `calibrated=False` | The sidebar defaults, `calibrated=False` |
+
+**Rules**
+
+- **Auto.** Call each registered profile's `detect` in registration order; the first match wins, and its evidence goes into the Check panel. If none matches, use the *If not recognised* profile, set `profile_source=fallback` and warn: `not recognised as VIOFO or Garmin; using VIOFO defaults`.
+- **Declared.** Choosing a profile skips the choice, but detection still runs. If another profile matches, keep the declaration and warn, as for a declared Recording mode (§8.8).
+- **What a profile changes.** Only defaults. Every setting the profile feeds has a `From profile` value (*Container clock is local time*, *Embedded GPS* backend, stamp region; date order `Auto` starts from it). Any explicit value overrides the profile for every video.
+- **Camera geometry.** With *Camera geometry for export* = `Sidebar values` (the default), grading is exactly as before. With `From profile (per video)`, each video is graded with its profile's `CameraPreset`. Either way, the values used go into `videos.csv`. While `calibrated` is False, the run summary says `PCI indicative: <profile> geometry not calibrated` (§13).
+- **Unchanged.** Photograph mode and the video preview don't use profiles, except that the preview's Check panel shows the detected profile.
+- **Batches.** The profile is resolved per video, so one folder can mix VIOFO and Garmin files. The time-zone carry-over (§8.7) and the date-order carry-over (§8.4) apply only between videos with the same profile.
+
+**Adding a make later**
+
+1. Write a `SourceProfile` for it and `register()` it in `profiles.py`.
+2. If the make stores GPS or time in a way no existing reader handles, add a reader module under `smartroad/survey/`, add it to `GPS_READERS`, and name it in the profile's `embedded_gps`. A new clock source works the same way, as a new entry in the Auto chain (§8.5).
+3. Add its file names to the A.5 table and a probe fixture to `test_profiles.py`.
+
+The sidebar lists `PROFILES`, so it needs no change, and the CSV schema doesn't change.
+
 ## 9. Architecture
 
 ### 9.1 Files
@@ -819,6 +929,7 @@ New files under `smartroad/survey/`. The package docstring already describes it 
 | `clock.py` | `parse_dashcam_filename()` (A.5), `fit_stamp_clock()` (segments, A.7), `per_frame_fallback()`, `resolve_clock()`, `start_zone()` (measured, carried over or configured, §8.7), local/UTC helpers |
 | `geo.py` | `GeoSettings`, `GeoSample`, `GeoContext`, `build_geo_context()` |
 | `timebase.py` | `TimeBase` (mode, speedup, playback_fps, source; `elapsed()`, `frame_elapsed()`, `capture_interval_s`), `detect_timebase()`, `snap()`, `slope()` (Theil–Sen), `sample_frames(n_frames, timebase, per_driving_s, max_frames)`. Reference implementation in A.8. |
+| `profiles.py` | `CameraPreset`, `ContainerProbe`, `SourceProfile`, `ProfileMatch`, the `PROFILES` registry with `register()`, `probe_container()`, `resolve_profile()`, and the VIOFO and Garmin profiles (§8.9) |
 
 New package `smartroad/export/`:
 
@@ -902,7 +1013,8 @@ def process_batch(videos: list[Path], settings: ExportSettings, run: RunFolder, 
 | `camera` | height 1.70, focal 25.0, horizon 0.139, near 3.0, far 15.0, severity "medium" |
 | `frames` | the frame-saving widgets in §5.3 |
 | `csv` | the CSV widgets in §5.3 |
-| `geo` | every widget in §5.4 |
+| `geo` | every widget in §5.4, except the two below |
+| `profile` | source profile `auto`, fallback `viofo`, camera geometry `sidebar` (§8.9) |
 
 The defaults must equal the GUI defaults, and a test checks this.
 
@@ -944,22 +1056,24 @@ python -m smartroad.export merge Output --out Output\_merged                   #
 
 ### Phase 0: probe real footage
 
-No changes in `smartroad/`. Using one A129 Plus clip that I'll provide, write `DATA/docs/DASHCAM_NOTES.md` containing:
+No changes in `smartroad/`. Using one A129 Plus clip that I'll provide, and one Garmin clip if there is one (§12, question 7), write `DATA/docs/DASHCAM_NOTES.md` containing, per clip:
 
 1. The output of `exiftool -ee3 -api debug=1 -G3 -a -s -GPSType -GPSDateTime -GPSLatitude -GPSLongitude -GPSSpeed CLIP.MP4`. `GPSType` names the decoder variant ExifTool used.
 2. The output of `exiftool -a -G1 -s -time:all CLIP.MP4`, for the container clock.
 3. The stamp read with Tesseract on 5 frames.
 4. The file name.
+5. `moov`'s children, the track handler types and any make/model strings: the evidence `detect` will use (§8.9).
 
 From these, work out:
 
 - the camera's UTC offset;
 - whether mvhd holds local time or UTC;
-- whether the stamp time matches the GPS time.
+- whether the stamp time matches the GPS time;
+- for Garmin, the stamp region, the date order and the Travelapse capture rate.
 
 If ExifTool or Tesseract is missing, give me the `winget` commands from §5.4 and stop.
 
-**Done when** the notes are committed and the defaults in §5.4 are confirmed or corrected.
+**Done when** the notes are committed and the defaults in §5.4 and both profiles in §8.9 are confirmed or corrected.
 
 ### Phase 1: refactor, frames per second, hood cut-off, frame saving
 
@@ -968,6 +1082,7 @@ Covers M1, M2, M9, and the Local file part of M7.
 Write the sampler against `TimeBase` (A.8) from the start, with speed-up 1. Phase 3 then adds timelapse without touching the main loop.
 
 - Add `export/annotate.py`, `export/inference.py`, `export/settings.py`, `export/frames_out.py` and `video.iter_samples`.
+- Add `survey/profiles.py` with the registry, `probe_container()`, `resolve_profile()` and both profiles. In this phase a profile supplies only the hood cut-off and camera preset, used when *Camera geometry for export* is `From profile`.
 - Add a minimal `pipeline.process_video` that only saves frames.
 - Add the Run export button.
 
@@ -994,6 +1109,7 @@ Covers M3.
 Covers M4, M5, M6 and M11 (timelapse), plus S3 (EXIF) and S5 (`tracks/*.gpx`).
 
 - Add `novatek.py`, `exiftool_gps.py`, `stamp.py`, `ocr.py`, `clock.py` and `geo.py`.
+- Wire the rest of each profile in: file-name patterns, container-clock rule, GPS reader, `gpsdatetime_is_clock`, stamp region, date order and capture rates. Add the *Source profile* and *If not recognised* widgets.
 - Add the `frames.py` additions from §9.1.
 - Add the sidebar section from §5.4 and the Check location & time button.
 
@@ -1029,6 +1145,7 @@ These must pass in CI's light environment, or skip with a reason.
 | `test_frames_out.py` | File names. Which-frames filters. The footer adds height and leaves the original pixels byte-for-byte identical. The EXIF round trip (A.6). Box scaling at original resolution. |
 | `test_geo.py` | `GeoContext` over a known `Track`: interpolation, `gap` (blank), `clamped`, `missing`, and derived speed and heading. |
 | `test_timebase.py` | Every check in A.8. **Detection:** ×30 and ×15 from the stamp; ×1 for normal video; ×30 from VIOFO GPS block times (1 block per video second, fixes 30 s apart); no evidence gives normal with a note. **Declared mode:** contradicted by the evidence, it is kept and warned; confirmed, no warning. **Snapping:** 29.97 fps. **Sampling:** every frame; every 2nd frame; a rate above the capture rate is capped; normal 30 fps gives frames 15, 45, 75, the same as `frame_times()`. **Long clip:** a 1-hour timelapse clip's `elapsed_s` reaches 3600 while its `video_time_s` reaches 120. |
+| `test_profiles.py` | **Registry:** both profiles registered, keys unique, the sidebar options equal the registry. **Detection:** a synthetic MP4 with a `gps ` box is VIOFO; `2025_0315_105644_0012F.MP4` is VIOFO by name; `GRMN0007.MP4` is Garmin; an unknown file falls back with a warning. **Declared:** a declared Garmin profile on a file with a `gps ` box is kept and warned. **Overrides:** an explicit setting beats the profile; `From profile` takes the profile's value. **Extension:** registering a test profile makes it detectable with no other change. |
 | `test_settings.py` | `ExportSettings()` defaults equal the `app.py` sidebar defaults. The JSON round trip. |
 | `test_tiled.py` (extend) | `road_roi(..., bottom_fraction=1.0)` gives the same result as before. A box whose centre is below the cut is dropped. |
 
@@ -1121,6 +1238,7 @@ The default is used until each question is answered.
    - the GPS block count against the frame count (expect one block per *video* second);
    - whether the stamp changes on every frame;
    - whether the file names differ from those of normal recordings.
+10. **Garmin model.** Which Garmin model? Stamp layout, Travelapse behaviour and container metadata differ between models. Default: the provisional Garmin profile in §8.9, corrected in Phase 0 when a clip is available.
 
 ## 13. Known limitations
 
